@@ -8,6 +8,7 @@ Responsibilities:
     2. Decode Ethernet.
     3. Decode IPv4.
     4. Decode TCP / UDP / ICMP.
+       Non-IPv4 packets are still reported and ignored in Phase 2.
     5. Extract:
          - MAC addresses
          - IP addresses
@@ -19,6 +20,7 @@ Responsibilities:
          - IP fragmentation information
          - payload
          - 5-tuple
+         - Packet abstraction for Phase 3 Flow Manager / Reassembly
 
 Run:
     python3 phase2_decode.py capture.pcap
@@ -30,6 +32,8 @@ Example:
 import argparse
 import socket
 import sys
+from dataclasses import dataclass, field
+from typing import Optional
 
 import dpkt
 
@@ -38,8 +42,9 @@ import dpkt
 # Constants
 # ============================================================
 
+# Chuyển TCP Flags từ dạng bit/hex sang tên dễ đọc
 TCP_FLAGS = {
-    dpkt.tcp.TH_FIN: "FIN",
+    dpkt.tcp.TH_FIN: "FIN", # Về mặt ý nghĩa thì dpkt.tcp.TH_FIN = 0x01
     dpkt.tcp.TH_SYN: "SYN",
     dpkt.tcp.TH_RST: "RST",
     dpkt.tcp.TH_PUSH: "PSH",
@@ -62,6 +67,7 @@ def mac_to_string(mac):
     if not mac:
         return "unknown"
 
+    # chuyển từ dạng bytes sang dạng hex string, ví dụ: b'\x01\x02' -> "01:02"
     return ":".join(
         f"{byte:02x}"
         for byte in mac
@@ -74,7 +80,7 @@ def ip_to_string(ip):
     """
 
     try:
-        return socket.inet_ntoa(ip)
+        return socket.inet_ntoa(ip) # chuyển đổi địa chỉ ipv4 từ dạng bytes sang string b'\x7f\x00\x00\x01' -> 127.0.0.1
 
     except (OSError, TypeError):
         return "unknown"
@@ -95,7 +101,7 @@ def format_tcp_flags(flags):
     if not names:
         return "NONE"
 
-    return ",".join(names)
+    return ",".join(names) # names = ['SYN', 'ACK'] -> "SYN,ACK"
 
 
 def hex_preview(data, length=64):
@@ -108,10 +114,12 @@ def hex_preview(data, length=64):
 
     preview = data[:length]
 
+    # chuyển từ dạng bytes sang dạng hex string, ví dụ: b'\x01\x02' -> "01 02"
     hex_data = " ".join(
         f"{byte:02x}"
         for byte in preview
     )
+
 
     if len(data) > length:
         hex_data += " ..."
@@ -168,6 +176,74 @@ def protocol_name(protocol):
 
 
 # ============================================================
+# Packet Object
+# ============================================================
+
+@dataclass
+class Packet:
+    """
+    Normalized packet abstraction used by later IDS phases.
+
+    Phase 2 only creates this object.
+    Flow tracking, reassembly and detection are NOT implemented here.
+    """
+
+    timestamp: float
+
+    # Ethernet
+    src_mac: str
+    dst_mac: str
+    ethertype: int
+
+    # IPv4
+    src_ip: Optional[str] = None
+    dst_ip: Optional[str] = None
+    ip_protocol: Optional[str] = None
+    ip_protocol_number: Optional[int] = None
+    ip_ttl: Optional[int] = None
+    ip_id: Optional[int] = None
+    ip_header_length: Optional[int] = None
+    ip_total_length: Optional[int] = None
+    fragment_offset: int = 0
+    more_fragments: bool = False
+    dont_fragment: bool = False
+
+    # Transport
+    src_port: Optional[int] = None
+    dst_port: Optional[int] = None
+
+    # TCP
+    tcp_seq: Optional[int] = None
+    tcp_ack: Optional[int] = None
+    tcp_flags: Optional[int] = None
+    tcp_flags_text: Optional[str] = None
+    tcp_window: Optional[int] = None
+    tcp_header_length: Optional[int] = None
+
+    # ICMP
+    icmp_type: Optional[int] = None
+    icmp_code: Optional[int] = None
+
+    # Payload
+    payload: bytes = field(default_factory=bytes)
+
+    # Directional 5-tuple:
+    # (src_ip, dst_ip, src_port, dst_port, protocol)
+    flow_key: Optional[tuple] = None
+
+    def payload_length(self) -> int:
+        return len(self.payload)
+
+    def summary(self) -> str:
+        return (
+            f"{self.ip_protocol or 'NON-IP'} "
+            f"{self.src_ip or '-'}:{self.src_port or '-'} -> "
+            f"{self.dst_ip or '-'}:{self.dst_port or '-'} "
+            f"payload={len(self.payload)}"
+        )
+
+
+# ============================================================
 # Packet Decoder
 # ============================================================
 
@@ -180,12 +256,116 @@ class PacketDecoder:
         self.udp_packets = 0
         self.icmp_packets = 0
         self.other_packets = 0
+        # Phase 2 output for Phase 3 (Flow Manager / Reassembly).
+        self.packets = []
+
+    # --------------------------------------------------------
+    # Packet Object factory
+    # --------------------------------------------------------
+
+    def _ethernet_fields(self, eth):
+        if eth is None:
+            return {
+                "src_mac": "unknown",
+                "dst_mac": "unknown",
+                "ethertype": 0,
+            }
+
+        return {
+            "src_mac": mac_to_string(eth.src),
+            "dst_mac": mac_to_string(eth.dst),
+            "ethertype": eth.type,
+        }
+
+    def _ipv4_fields(self, ip, protocol, src_ip, dst_ip, src_port, dst_port):
+        if ip is None:
+            return {
+                "src_ip": src_ip,
+                "dst_ip": dst_ip,
+                "ip_protocol": protocol,
+                "ip_protocol_number": None,
+                "ip_ttl": None,
+                "ip_id": None,
+                "ip_header_length": None,
+                "ip_total_length": None,
+                "fragment_offset": 0,
+                "more_fragments": False,
+                "dont_fragment": False,
+                "src_port": src_port,
+                "dst_port": dst_port,
+            }
+
+        return {
+            "src_ip": src_ip,
+            "dst_ip": dst_ip,
+            "ip_protocol": protocol,
+            "ip_protocol_number": ip.p,
+            "ip_ttl": ip.ttl,
+            "ip_id": ip.id,
+            "ip_header_length": ip.hl * 4,
+            "ip_total_length": ip.len,
+            "fragment_offset": ip.off & dpkt.ip.IP_OFFMASK,
+            "more_fragments": bool(ip.off & dpkt.ip.IP_MF),
+            "dont_fragment": bool(ip.off & dpkt.ip.IP_DF),
+            "src_port": src_port,
+            "dst_port": dst_port,
+        }
+
+    def _transport_fields(self, tcp, icmp):
+        if tcp is not None:
+            return {
+                "tcp_seq": tcp.seq,
+                "tcp_ack": tcp.ack,
+                "tcp_flags": tcp.flags,
+                "tcp_flags_text": format_tcp_flags(tcp.flags),
+                "tcp_window": tcp.win,
+                "tcp_header_length": tcp.off * 4,
+                "icmp_type": None,
+                "icmp_code": None,
+            }
+
+        if icmp is not None:
+            return {
+                "tcp_seq": None,
+                "tcp_ack": None,
+                "tcp_flags": None,
+                "tcp_flags_text": None,
+                "tcp_window": None,
+                "tcp_header_length": None,
+                "icmp_type": icmp.type,
+                "icmp_code": icmp.code,
+            }
+
+        return {
+            "tcp_seq": None,
+            "tcp_ack": None,
+            "tcp_flags": None,
+            "tcp_flags_text": None,
+            "tcp_window": None,
+            "tcp_header_length": None,
+            "icmp_type": None,
+            "icmp_code": None,
+        }
+
+    def build_packet(self, timestamp, eth, ip, protocol,
+                     src_ip, dst_ip, src_port=None, dst_port=None,
+                     tcp=None, icmp=None, payload=b"", flow_key=None):
+        """Build the normalized Packet object consumed by Phase 3."""
+        packet = Packet(
+            timestamp=timestamp,
+            payload=payload,
+            flow_key=flow_key,
+            **self._ethernet_fields(eth),
+            **self._ipv4_fields(ip, protocol, src_ip, dst_ip, src_port, dst_port),
+            **self._transport_fields(tcp, icmp),
+        )
+        self.packets.append(packet)
 
     # --------------------------------------------------------
     # Ethernet
     # --------------------------------------------------------
 
-    def decode_ethernet(self, timestamp, raw_packet):
+    def decode_ethernet(self, raw_packet, timestamp=0.0):
 
         try:
             eth = dpkt.ethernet.Ethernet(raw_packet)
@@ -243,13 +423,13 @@ class PacketDecoder:
 
         ip = eth.data
 
-        self.decode_ipv4(ip)
+        self.decode_ipv4(ip, timestamp, eth)
 
     # --------------------------------------------------------
     # IPv4
     # --------------------------------------------------------
 
-    def decode_ipv4(self, ip):
+    def decode_ipv4(self, ip, timestamp=0.0, eth=None):
 
         src_ip = ip_to_string(ip.src)
         dst_ip = ip_to_string(ip.dst)
@@ -353,7 +533,10 @@ class PacketDecoder:
             self.decode_tcp(
                 src_ip,
                 dst_ip,
-                ip.data
+                ip.data,
+                timestamp=timestamp,
+                eth=eth,
+                ip=ip
             )
 
         elif isinstance(ip.data, dpkt.udp.UDP):
@@ -363,7 +546,10 @@ class PacketDecoder:
             self.decode_udp(
                 src_ip,
                 dst_ip,
-                ip.data
+                ip.data,
+                timestamp=timestamp,
+                eth=eth,
+                ip=ip
             )
 
         elif isinstance(ip.data, dpkt.icmp.ICMP):
@@ -373,7 +559,10 @@ class PacketDecoder:
             self.decode_icmp(
                 src_ip,
                 dst_ip,
-                ip.data
+                ip.data,
+                timestamp=timestamp,
+                eth=eth,
+                ip=ip
             )
 
         else:
@@ -390,7 +579,7 @@ class PacketDecoder:
     # TCP
     # --------------------------------------------------------
 
-    def decode_tcp(self, src_ip, dst_ip, tcp):
+    def decode_tcp(self, src_ip, dst_ip, tcp, timestamp=0.0, eth=None, ip=None):
 
         payload = bytes(tcp.data)
 
@@ -408,6 +597,20 @@ class PacketDecoder:
             tcp.sport,
             tcp.dport,
             "TCP"
+        )
+
+        self.build_packet(
+            timestamp=timestamp,
+            eth=eth,
+            ip=ip,
+            protocol="TCP",
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            src_port=tcp.sport,
+            dst_port=tcp.dport,
+            tcp=tcp,
+            payload=payload,
+            flow_key=flow_key,
         )
 
         print()
@@ -487,7 +690,7 @@ class PacketDecoder:
     # UDP
     # --------------------------------------------------------
 
-    def decode_udp(self, src_ip, dst_ip, udp):
+    def decode_udp(self, src_ip, dst_ip, udp, timestamp=0.0, eth=None, ip=None):
 
         payload = bytes(udp.data)
 
@@ -497,6 +700,19 @@ class PacketDecoder:
             udp.sport,
             udp.dport,
             "UDP"
+        )
+
+        self.build_packet(
+            timestamp=timestamp,
+            eth=eth,
+            ip=ip,
+            protocol="UDP",
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            src_port=udp.sport,
+            dst_port=udp.dport,
+            payload=payload,
+            flow_key=flow_key,
         )
 
         print()
@@ -547,7 +763,21 @@ class PacketDecoder:
     # ICMP
     # --------------------------------------------------------
 
-    def decode_icmp(self, src_ip, dst_ip, icmp):
+    def decode_icmp(self, src_ip, dst_ip, icmp, timestamp=0.0, eth=None, ip=None):
+
+        payload = bytes(icmp.data) if getattr(icmp, "data", None) else b""
+
+        self.build_packet(
+            timestamp=timestamp,
+            eth=eth,
+            ip=ip,
+            protocol="ICMP",
+            src_ip=src_ip,
+            dst_ip=dst_ip,
+            icmp=icmp,
+            payload=payload,
+            flow_key=(src_ip, dst_ip, None, None, "ICMP"),
+        )
 
         print()
         print("ICMP")
@@ -605,6 +835,10 @@ class PacketDecoder:
             f"Other packets : {self.other_packets}"
         )
 
+        print(
+            f"Packet objects: {len(self.packets)}"
+        )
+
         print("=" * 80)
 
 
@@ -626,10 +860,7 @@ def decode_pcap(filename, packet_limit=None):
 
                 decoder.total_packets += 1
 
-                decoder.decode_ethernet(
-                    timestamp,
-                    raw_packet
-                )
+                decoder.decode_ethernet(raw_packet, timestamp=timestamp)
 
                 if (
                     packet_limit is not None
@@ -656,6 +887,34 @@ def decode_pcap(filename, packet_limit=None):
     finally:
 
         decoder.print_statistics()
+
+
+
+# ============================================================
+# Phase 2 -> Phase 3 Handoff
+# ============================================================
+
+def print_packet_objects(decoder):
+    """
+    Optional inspection helper.
+
+    The Packet objects are the contract for:
+        Packet -> Flow Manager -> Reassembly -> Detection
+
+    It is intentionally NOT called by default.
+    """
+    print()
+    print("=" * 80)
+    print("PACKET OBJECTS (PHASE 3 HANDOFF)")
+    print("=" * 80)
+
+    for index, packet in enumerate(decoder.packets, start=1):
+        print(f"[{index}] {packet.summary()}")
+        print(f"     timestamp       : {packet.timestamp}")
+        print(f"     flow_key        : {packet.flow_key}")
+        print(f"     fragment_offset : {packet.fragment_offset}")
+        print(f"     more_fragments  : {packet.more_fragments}")
+        print(f"     payload_length  : {packet.payload_length()}")
 
 
 # ============================================================
@@ -714,4 +973,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
