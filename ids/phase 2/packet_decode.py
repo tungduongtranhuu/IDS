@@ -40,6 +40,15 @@ Important:
         - Detection
         - Alerting
 
+Capture metadata:
+    capture_length:
+        Number of bytes actually stored in the PCAP packet record.
+        This corresponds to the PCAP incl_len field.
+
+    wire_length:
+        Original packet length on the wire.
+        This corresponds to the PCAP orig_len field.
+
 Run:
     python3 phase2_decode.py capture.pcap
 
@@ -49,14 +58,18 @@ Example:
 
 import argparse
 import socket
+import struct
 import sys
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional
+from datetime import datetime, timezone
 
 import dpkt
 
 
+# ============================================================
 # Constants
+# ============================================================
 
 # Chuyển TCP Flags từ dạng bit/hex sang tên dễ đọc
 TCP_FLAGS = {
@@ -71,7 +84,9 @@ TCP_FLAGS = {
 }
 
 
+# ============================================================
 # Utility Functions
+# ============================================================
 
 def mac_to_string(mac):
     """
@@ -81,7 +96,6 @@ def mac_to_string(mac):
     if not mac:
         return "unknown"
 
-    # chuyển từ dạng bytes sang dạng hex string, ví dụ: b'\x01\x02' -> "01:02"
     return ":".join(
         f"{byte:02x}"
         for byte in mac
@@ -128,12 +142,10 @@ def hex_preview(data, length=64):
 
     preview = data[:length]
 
-    # chuyển từ dạng bytes sang dạng hex string, ví dụ: b'\x01\x02' -> "01 02"
     hex_data = " ".join(
         f"{byte:02x}"
         for byte in preview
     )
-
 
     if len(data) > length:
         hex_data += " ..."
@@ -170,8 +182,15 @@ def ascii_preview(data, length=128):
 
     return text
 
+def format_timestamp(timestamp):
+    return datetime.fromtimestamp(
+        timestamp,
+        tz=timezone.utc
+    ).strftime("%Y-%m-%d %H:%M:%S.%f")
 
+# ============================================================
 # Protocol Name
+# ============================================================
 
 def protocol_name(protocol):
 
@@ -187,7 +206,197 @@ def protocol_name(protocol):
     return f"OTHER({protocol})"
 
 
+# ============================================================
+# PCAP Reader
+# ============================================================
+
+def read_pcap_packets(file):
+    """
+    Read packets directly from a classic PCAP file.
+
+    This function reads the PCAP packet record header directly
+    so that both incl_len and orig_len are available.
+
+    Structure of a pcap file:
+    ┌───────────────────────────────────────────────────────┐
+    │              Global Header (24 bytes)                 │
+    ├───────────────────────────────────────────────────────┤
+    │  Packet Header 1 (16 bytes)                           │
+    ├───────────────────────────────┐                       │
+    │  Packet Data 1 (Raw Payload)  │──> Gói tin mạng thứ 1 │
+    ├───────────────────────────────┴───────────────────────┤
+    │  Packet Header 2 (16 bytes)                           │
+    ├───────────────────────────────┐                       │
+    │  Packet Data 2 (Raw Payload)  │──> Gói tin mạng thứ 2 │
+    ├───────────────────────────────┴───────────────────────┤
+    │  ... (Tiếp tục cho đến hết file)                      │
+    └───────────────────────────────────────────────────────┘
+    PCAP global header (24 bytes):
+
+        magic_number;   /* 4 bytes: Nhận diện định dạng file và tính Endian */
+        version_major;  /* 2 bytes: Phiên bản chính (Thường là 2) */
+        version_minor;  /* 2 bytes: Phiên bản phụ (Thường là 4) */
+        thiszone;       /* 4 bytes: Múi giờ gmt (Thường là 0) */
+        sigfigs;        /* 4 bytes: Độ chính xác timestamp (Thường là 0) */
+        snaplen;        /* 4 bytes: Chiều dài tối đa của gói tin được chụp */
+        network;        /* 4 bytes: Loại tầng liên kết dữ liệu (Data Link Type) */
+
+
+    PCAP packet record header (16 bytes):
+
+        ts_sec;   /* 4 bytes: Dấu thời gian (giây) */
+        ts_usec;  /* 4 bytes: Dấu thời gian (micro-giây hoặc nano-giây) */
+        incl_len; /* 4 bytes: Số byte dữ liệu thực tế được lưu vào file */
+        orig_len; /* 4 bytes: Số byte thực tế của gói tin khi chạy trên mạng */
+
+    Returns:
+
+        timestamp
+        raw_packet
+        capture_length
+        wire_length
+
+    Where:
+
+        capture_length = incl_len
+        wire_length    = orig_len
+
+    Important:
+        This function is for classic PCAP format.
+        It is NOT a PCAP-NG parser.
+    """
+
+    # --------------------------------------------------------
+    # Read PCAP global header
+    # --------------------------------------------------------
+
+    global_header = file.read(24)
+
+    if len(global_header) != 24:
+
+        raise ValueError(
+            "Invalid or truncated PCAP global header"
+        )
+
+    # --------------------------------------------------------
+    # Detect PCAP byte order and timestamp precision
+    # --------------------------------------------------------
+
+    magic = global_header[:4]
+
+    # Classic PCAP, microsecond precision, little endian
+    if magic == b"\xd4\xc3\xb2\xa1":
+
+        endian = "<"
+
+    # Classic PCAP, microsecond precision, big endian
+    elif magic == b"\xa1\xb2\xc3\xd4":
+
+        endian = ">"
+
+    # Classic PCAP, nanosecond precision, little endian
+    elif magic == b"\x4d\x3c\xb2\xa1":
+
+        endian = "<"
+
+    # Classic PCAP, nanosecond precision, big endian
+    elif magic == b"\xa1\xb2\x3c\x4d":
+
+        endian = ">"
+
+    else:
+
+        raise ValueError(
+            "Unsupported PCAP format or invalid PCAP magic number"
+        )
+
+    # Nanosecond PCAP uses the same packet record structure.
+    #
+    # The timestamp fraction is converted below using the
+    # appropriate divisor.
+
+    nanosecond_precision = magic in (
+        b"\x4d\x3c\xb2\xa1",
+        b"\xa1\xb2\x3c\x4d",
+    )
+
+    timestamp_divisor = (
+        1_000_000_000
+        if nanosecond_precision
+        else 1_000_000
+    )
+
+    # --------------------------------------------------------
+    # Read every packet record 
+    # --------------------------------------------------------
+
+    while True:
+
+        packet_header = file.read(16)
+
+        # Normal end of PCAP
+        if not packet_header:
+            break
+
+        if len(packet_header) != 16:
+
+            raise ValueError(
+                "Truncated PCAP packet header"
+            )
+
+        # nhận vào chuỗi byte thô và sắp xếp theo định dạng endian để giải nén thành các trường dữ liệu
+        (
+            ts_sec,
+            ts_fraction,
+            incl_len,
+            orig_len,
+        ) = struct.unpack(
+            endian + "IIII",
+            packet_header
+        )
+
+        # ----------------------------------------------------
+        # Read exactly incl_len bytes
+        # ----------------------------------------------------
+
+        raw_packet = file.read(
+            incl_len
+        )
+
+        if len(raw_packet) != incl_len:
+
+            raise ValueError(
+                "Truncated PCAP packet data"
+            )
+
+        # ----------------------------------------------------
+        # Build timestamp
+        # ----------------------------------------------------
+
+        timestamp = (
+            ts_sec
+            + (
+                ts_fraction
+                / timestamp_divisor
+            )
+        )
+
+        # ----------------------------------------------------
+        # Yield yield trả từng kết quả một, 
+        # tạm dừng hàm và giữ trạng thái để lần iteration tiếp theo tiếp tục từ chỗ đã dừng
+        # ----------------------------------------------------
+
+        yield (
+            timestamp,
+            raw_packet,
+            incl_len,
+            orig_len,
+        )
+
+
+# ============================================================
 # Packet Object
+# ============================================================
 
 @dataclass
 class Packet:
@@ -200,20 +409,37 @@ class Packet:
     are NOT implemented here.
     """
 
+    # --------------------------------------------------------
     # Capture metadata
+    # --------------------------------------------------------
 
     timestamp: float
 
+    # Number of bytes actually captured/stored in PCAP.
+    #
+    # PCAP field:
+    #     incl_len
+    #
     capture_length: Optional[int] = None
+
+    # Original packet size on the wire.
+    #
+    # PCAP field:
+    #     orig_len
+    #
     wire_length: Optional[int] = None
 
+    # --------------------------------------------------------
     # Ethernet
+    # --------------------------------------------------------
 
     src_mac: str = "unknown"
     dst_mac: str = "unknown"
     ethertype: Optional[int] = None
 
+    # --------------------------------------------------------
     # IPv4
+    # --------------------------------------------------------
 
     src_ip: Optional[str] = None
     dst_ip: Optional[str] = None
@@ -229,11 +455,11 @@ class Packet:
 
     ip_checksum: Optional[int] = None
 
-    # Raw fragment offset value from IPv4 header.
+    # Raw offset value from IPv4 header.
     # Unit = 8-byte blocks.
     fragment_offset: int = 0
 
-    # Same offset converted to bytes.
+    # Offset converted to bytes.
     fragment_offset_bytes: int = 0
 
     more_fragments: bool = False
@@ -247,12 +473,16 @@ class Packet:
     # (src_ip, dst_ip, protocol_number, ip_id)
     ip_fragment_key: Optional[tuple] = None
 
+    # --------------------------------------------------------
     # Transport
+    # --------------------------------------------------------
 
     src_port: Optional[int] = None
     dst_port: Optional[int] = None
 
+    # --------------------------------------------------------
     # TCP
+    # --------------------------------------------------------
 
     tcp_seq: Optional[int] = None
     tcp_ack: Optional[int] = None
@@ -268,12 +498,16 @@ class Packet:
 
     tcp_options: bytes = field(default_factory=bytes)
 
+    # --------------------------------------------------------
     # UDP
+    # --------------------------------------------------------
 
     udp_length: Optional[int] = None
     udp_checksum: Optional[int] = None
 
+    # --------------------------------------------------------
     # ICMP
+    # --------------------------------------------------------
 
     icmp_type: Optional[int] = None
     icmp_code: Optional[int] = None
@@ -283,19 +517,26 @@ class Packet:
     icmp_identifier: Optional[int] = None
     icmp_sequence: Optional[int] = None
 
+    # --------------------------------------------------------
     # Payload
+    # --------------------------------------------------------
 
     # Normalization belongs to a later phase.
     payload: bytes = field(default_factory=bytes)
 
+    # --------------------------------------------------------
     # Flow
+    # --------------------------------------------------------
 
     # Directional 5-tuple:
     #
     # (src_ip, dst_ip, src_port, dst_port, protocol)
     flow_key: Optional[tuple] = None
 
+    # --------------------------------------------------------
     # Helper methods
+    # --------------------------------------------------------
+
     def payload_length(self) -> int:
         return len(self.payload)
 
@@ -327,7 +568,9 @@ class Packet:
         )
 
 
+# ============================================================
 # Packet Decoder
+# ============================================================
 
 class PacketDecoder:
 
@@ -345,11 +588,12 @@ class PacketDecoder:
 
         self.other_packets = 0
 
-        # Phase 2 output for Phase 3
         # Flow Manager / Reassembly.
         self.packets = []
 
+    # ========================================================
     # Packet Object factory
+    # ========================================================
 
     def _ethernet_fields(self, eth):
 
@@ -427,11 +671,13 @@ class PacketDecoder:
             "ip_checksum": ip.sum,
 
             # IPv4 fragment offset:
-            # stored in units of 8 bytes.
+            # value is expressed in 8-byte units.
             "fragment_offset": fragment_offset,
 
             # Converted to bytes for reassembly.
-            "fragment_offset_bytes": fragment_offset * 8,
+            "fragment_offset_bytes": (
+                fragment_offset * 8
+            ),
 
             "more_fragments": bool(
                 ip.off & dpkt.ip.IP_MF
@@ -459,7 +705,12 @@ class PacketDecoder:
             "dst_port": dst_port,
         }
 
-    def _transport_fields(self, tcp, udp, icmp):
+    def _transport_fields(
+        self,
+        tcp,
+        udp,
+        icmp
+    ):
 
         # ----------------------------------------------------
         # TCP
@@ -479,14 +730,20 @@ class PacketDecoder:
 
                 "tcp_window": tcp.win,
 
-                "tcp_header_length": tcp.off * 4,
+                "tcp_header_length": (
+                    tcp.off * 4
+                ),
 
                 "tcp_checksum": tcp.sum,
 
                 "tcp_urgent_pointer": tcp.urp,
 
                 "tcp_options": bytes(
-                    getattr(tcp, "opts", b"")
+                    getattr(
+                        tcp,
+                        "opts",
+                        b""
+                    )
                 ),
 
                 "udp_length": None,
@@ -539,17 +796,6 @@ class PacketDecoder:
             identifier = None
             sequence = None
 
-            # ICMP Echo Request / Echo Reply:
-            #
-            # type
-            # code
-            # checksum
-            # id
-            # sequence
-            #
-            # dpkt exposes these fields through the ICMP
-            # Echo structure for Echo messages.
-
             icmp_data = getattr(
                 icmp,
                 "data",
@@ -577,6 +823,7 @@ class PacketDecoder:
 
                 "tcp_checksum": None,
                 "tcp_urgent_pointer": None,
+
                 "tcp_options": b"",
 
                 "udp_length": None,
@@ -607,6 +854,7 @@ class PacketDecoder:
 
             "tcp_checksum": None,
             "tcp_urgent_pointer": None,
+
             "tcp_options": b"",
 
             "udp_length": None,
@@ -615,9 +863,14 @@ class PacketDecoder:
             "icmp_type": None,
             "icmp_code": None,
             "icmp_checksum": None,
+
             "icmp_identifier": None,
             "icmp_sequence": None,
         }
+
+    # ========================================================
+    # Build Packet
+    # ========================================================
 
     def build_packet(
         self,
@@ -639,13 +892,22 @@ class PacketDecoder:
     ):
         """
         Build the normalized Packet object consumed by Phase 3.
+
+        capture_length:
+            Number of bytes actually captured in PCAP.
+
+        wire_length:
+            Original packet size from PCAP orig_len.
         """
 
         packet = Packet(
 
             timestamp=timestamp,
 
+            # PCAP incl_len
             capture_length=capture_length,
+
+            # PCAP orig_len
             wire_length=wire_length,
 
             payload=payload,
@@ -673,12 +935,15 @@ class PacketDecoder:
 
         return packet
 
+    # ========================================================
     # Ethernet
+    # ========================================================
 
     def decode_ethernet(
         self,
         raw_packet,
         timestamp=0.0,
+        capture_length=None,
         wire_length=None
     ):
 
@@ -699,7 +964,22 @@ class PacketDecoder:
 
             return
 
-        capture_length = len(raw_packet)
+        # ----------------------------------------------------
+        # Capture length
+        # ----------------------------------------------------
+        #
+        # If capture_length was supplied from the PCAP header,
+        # use it.
+        #
+        # Otherwise fall back to the actual byte count in
+        # raw_packet.
+        #
+
+        if capture_length is None:
+
+            capture_length = len(
+                raw_packet
+            )
 
         print()
         print("=" * 80)
@@ -709,6 +989,9 @@ class PacketDecoder:
         )
 
         print("=" * 80)
+        print(
+            f"Timestamp       : {format_timestamp(timestamp)}"
+        )
 
         # ----------------------------------------------------
         # Ethernet header
@@ -779,7 +1062,9 @@ class PacketDecoder:
             wire_length=wire_length,
         )
 
+    # ========================================================
     # IPv4
+    # ========================================================
 
     def decode_ipv4(
         self,
@@ -834,6 +1119,7 @@ class PacketDecoder:
         print()
         print("IPv4")
         print("-" * 80)
+        print(f"Timestamp       : {format_timestamp(timestamp)}")
 
         print(
             f"  Source IP       : "
@@ -945,18 +1231,6 @@ class PacketDecoder:
                 "stored for Phase 3 reassembly."
             )
 
-            # The payload of a non-first fragment is the
-            # fragment data itself.
-            #
-            # Phase 3 will combine these fragments using:
-            #
-            # src_ip
-            # dst_ip
-            # protocol
-            # ip_id
-            # fragment_offset_bytes
-            # more_fragments
-
             fragment_payload = bytes(
                 ip.data
             )
@@ -1043,11 +1317,6 @@ class PacketDecoder:
 
             self.other_packets += 1
 
-            # Preserve unknown IPv4 payload as a Packet object.
-            #
-            # This is important because Phase 2 should not
-            # silently destroy data that may be useful later.
-
             unknown_payload = bytes(
                 ip.data
             )
@@ -1071,7 +1340,9 @@ class PacketDecoder:
                 f"not decoded: {protocol}"
             )
 
+    # ========================================================
     # TCP
+    # ========================================================
 
     def decode_tcp(
         self,
@@ -1130,6 +1401,7 @@ class PacketDecoder:
         print()
         print("TCP")
         print("-" * 80)
+        print(f"Timestamp       : {format_timestamp(timestamp)}")
 
         print(
             f"  Source Port      : "
@@ -1186,10 +1458,6 @@ class PacketDecoder:
             f"{len(payload)} bytes"
         )
 
-        # ----------------------------------------------------
-        # 5-tuple
-        # ----------------------------------------------------
-
         print()
         print("5-TUPLE")
         print("-" * 80)
@@ -1197,10 +1465,6 @@ class PacketDecoder:
         print(
             f"  {flow_key}"
         )
-
-        # ----------------------------------------------------
-        # Payload
-        # ----------------------------------------------------
 
         if payload:
 
@@ -1225,7 +1489,9 @@ class PacketDecoder:
                 "  No TCP payload."
             )
 
+    # ========================================================
     # UDP
+    # ========================================================
 
     def decode_udp(
         self,
@@ -1276,7 +1542,7 @@ class PacketDecoder:
         print()
         print("UDP")
         print("-" * 80)
-
+        print(f"Timestamp       : {format_timestamp(timestamp)}")
         print(
             f"  Source Port      : "
             f"{udp.sport}"
@@ -1326,7 +1592,9 @@ class PacketDecoder:
                 f"{ascii_preview(payload)}"
             )
 
+    # ========================================================
     # ICMP
+    # ========================================================
 
     def decode_icmp(
         self,
@@ -1340,13 +1608,15 @@ class PacketDecoder:
         wire_length=None,
     ):
 
-        payload = bytes(
-            icmp.data
-        ) if getattr(
-            icmp,
-            "data",
-            None
-        ) else b""
+        payload = (
+            bytes(icmp.data)
+            if getattr(
+                icmp,
+                "data",
+                None
+            )
+            else b""
+        )
 
         self.build_packet(
             timestamp=timestamp,
@@ -1376,6 +1646,7 @@ class PacketDecoder:
         print()
         print("ICMP")
         print("-" * 80)
+        print(f"Timestamp       : {format_timestamp(timestamp)}")
 
         print(
             f"  Source IP      : "
@@ -1428,7 +1699,9 @@ class PacketDecoder:
             f"{len(payload)}"
         )
 
+    # ========================================================
     # Statistics
+    # ========================================================
 
     def print_statistics(self):
 
@@ -1481,7 +1754,9 @@ class PacketDecoder:
         print("=" * 80)
 
 
+# ============================================================
 # PCAP Processing
+# ============================================================
 
 def decode_pcap(
     filename,
@@ -1497,31 +1772,36 @@ def decode_pcap(
             "rb"
         ) as file:
 
-            pcap = dpkt.pcap.Reader(
-                file
-            )
+            # ------------------------------------------------
+            # Read PCAP packets.
+            #
+            # Each packet gives us:
+            #
+            #   raw_packet      -> actual captured bytes
+            #   capture_length  -> incl_len
+            #   wire_length     -> orig_len
+            #
+            # ------------------------------------------------
 
-            for timestamp, raw_packet in pcap:
+            for (
+                timestamp,
+                raw_packet,
+                capture_length,
+                wire_length,
+            ) in read_pcap_packets(file):
 
                 decoder.total_packets += 1
 
-                # PCAP gives us the captured packet bytes.
-                #
-                # For normal non-truncated captures,
-                # capture length == wire length.
-                #
-                # If the PCAP has a different captured/original
-                # length representation, this can be extended
-                # later depending on the capture format.
-
-                capture_length = len(
-                    raw_packet
-                )
-
                 decoder.decode_ethernet(
                     raw_packet,
+
                     timestamp=timestamp,
-                    wire_length=capture_length,
+
+                    # Number of bytes actually captured.
+                    capture_length=capture_length,
+
+                    # Original packet size on the wire.
+                    wire_length=wire_length,
                 )
 
                 if (
@@ -1560,7 +1840,9 @@ def decode_pcap(
     return decoder
 
 
+# ============================================================
 # Phase 2 -> Phase 3 Handoff
+# ============================================================
 
 def print_packet_objects(decoder):
     """
@@ -1599,7 +1881,7 @@ def print_packet_objects(decoder):
 
         print(
             f"     timestamp          : "
-            f"{packet.timestamp}"
+            f"{format_timestamp(packet.timestamp)}"
         )
 
         print(
@@ -1643,7 +1925,9 @@ def print_packet_objects(decoder):
         )
 
 
+# ============================================================
 # CLI
+# ============================================================
 
 def get_arguments():
 
@@ -1667,7 +1951,9 @@ def get_arguments():
     return parser.parse_args()
 
 
+# ============================================================
 # Main
+# ============================================================
 
 def main():
 
