@@ -218,13 +218,58 @@ class PacketDecoder:
             LOGGER.info("[%d] %s", len(self.packets), packet.summary())
         elif self.output_mode == "debug":
             LOGGER.debug("Packet #%d", len(self.packets))
-            LOGGER.debug("  timestamp: %s", format_timestamp(packet.timestamp))
-            LOGGER.debug("  ethernet: %s -> %s, type=0x%04x", packet.src_mac, packet.dst_mac, packet.ethertype or 0)
-            LOGGER.debug("  network: %s -> %s, protocol=%s, ttl=%s, id=%s", packet.src_ip, packet.dst_ip, packet.ip_protocol, packet.ip_ttl, packet.ip_id)
-            LOGGER.debug("  transport: %s:%s -> %s:%s, flags=%s, seq=%s, ack=%s", packet.src_ip, packet.src_port, packet.dst_ip, packet.dst_port, packet.tcp_flags_text, packet.tcp_seq, packet.tcp_ack)
-            LOGGER.debug("  flow_key: %s", packet.flow_key)
-            LOGGER.debug("  fragment_key: %s, offset=%s, more=%s", packet.ip_fragment_key, packet.fragment_offset_bytes, packet.more_fragments)
-            LOGGER.debug("  payload length: %d", packet.payload_length())
+            ip_flags = []
+            if packet.dont_fragment:
+                ip_flags.append("DF")
+            if packet.more_fragments:
+                ip_flags.append("MF")
+
+            LOGGER.debug("  capture: timestamp=%s capture_length=%s wire_length=%s", format_timestamp(packet.timestamp), packet.capture_length, packet.wire_length)
+            LOGGER.debug("  ethernet: src_mac=%s dst_mac=%s ethertype=0x%04x", packet.src_mac, packet.dst_mac, packet.ethertype or 0)
+            LOGGER.debug(
+                "  ip: src_ip=%s dst_ip=%s protocol=%s ttl=%s ip_id=%s total_length=%s header_length=%s checksum=%s fragment_offset=%s fragment_offset_bytes=%s flags=%s",
+                packet.src_ip,
+                packet.dst_ip,
+                packet.ip_protocol,
+                packet.ip_ttl,
+                packet.ip_id,
+                packet.ip_total_length,
+                packet.ip_header_length,
+                packet.ip_checksum,
+                packet.fragment_offset,
+                packet.fragment_offset_bytes,
+                ",".join(ip_flags) if ip_flags else "NONE",
+            )
+
+            LOGGER.debug(
+                "  tcp: src_port=%s dst_port=%s seq=%s ack=%s flags=%s window=%s header_length=%s checksum=%s options=%r",
+                packet.src_port,
+                packet.dst_port,
+                packet.tcp_seq,
+                packet.tcp_ack,
+                packet.tcp_flags_text,
+                packet.tcp_window,
+                packet.tcp_header_length,
+                packet.tcp_checksum,
+                packet.tcp_options,
+            )
+            LOGGER.debug(
+                "  udp: src_port=%s dst_port=%s length=%s checksum=%s",
+                packet.src_port,
+                packet.dst_port,
+                packet.udp_length,
+                packet.udp_checksum,
+            )
+            LOGGER.debug(
+                "  icmp: type=%s code=%s checksum=%s id=%s sequence=%s",
+                packet.icmp_type,
+                packet.icmp_code,
+                packet.icmp_checksum,
+                packet.icmp_identifier,
+                packet.icmp_sequence,
+            )
+            LOGGER.debug("  flow: five_tuple=%s ip_fragment_key=%s", packet.flow_key, packet.ip_fragment_key)
+            LOGGER.debug("  payload: length=%d bytes=%r", packet.payload_length(), packet.payload)
             if packet.payload:
                 LOGGER.debug("  payload bytes: %r", packet.payload)
                 LOGGER.debug("  payload hex: %s", hex_preview(packet.payload))
@@ -300,7 +345,7 @@ class PacketDecoder:
         )
 
     def decode_tcp(self, src_ip, dst_ip, tcp, timestamp=0.0, eth=None, ip=None, capture_length=None, wire_length=None):
-        flow_key = (src_ip, dst_ip, tcp.sport, tcp.dport, "TCP")
+        flow_key = (src_ip, tcp.sport, dst_ip, tcp.dport, "TCP")
         return self.build_packet(
             timestamp=timestamp,
             eth=eth,
@@ -318,7 +363,7 @@ class PacketDecoder:
         )
 
     def decode_udp(self, src_ip, dst_ip, udp, timestamp=0.0, eth=None, ip=None, capture_length=None, wire_length=None):
-        flow_key = (src_ip, dst_ip, udp.sport, udp.dport, "UDP")
+        flow_key = (src_ip, udp.sport, dst_ip, udp.dport, "UDP")
         return self.build_packet(
             timestamp=timestamp,
             eth=eth,
@@ -336,7 +381,7 @@ class PacketDecoder:
         )
 
     def decode_icmp(self, src_ip, dst_ip, icmp, timestamp=0.0, eth=None, ip=None, capture_length=None, wire_length=None):
-        flow_key = (src_ip, dst_ip, None, None, "ICMP")
+        flow_key = (src_ip, None, dst_ip, None, "ICMP")
         payload = bytes(icmp.data) if getattr(icmp, "data", None) else b""
         return self.build_packet(
             timestamp=timestamp,

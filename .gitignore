@@ -2,3 +2,6 @@
 flow for build/
 utilisation/
 nội dung project.md
+*_pycache__/
+*results*/
+tests/phase 2/cach_test_*
