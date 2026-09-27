@@ -353,5 +353,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-### Thêm src và dst ở mỗi gói tin
