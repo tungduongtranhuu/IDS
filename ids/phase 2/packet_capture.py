@@ -338,3 +338,8 @@ def capture_packets(interface, output):
         print("[+] Resources released.")
 
 
+if __name__ == "__main__":
+    arguments = get_arguments()
+    capture_packets(arguments.interface, arguments.output)
+
+
