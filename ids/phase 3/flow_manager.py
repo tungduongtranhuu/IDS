@@ -61,6 +61,8 @@ class Flow:
     direction_packet_counts: dict[DirectionalKey, int] = field(default_factory=dict)
     direction_byte_counts: dict[DirectionalKey, int] = field(default_factory=dict)
     tcp_state: str = "NONE"
+    status: str = "ACTIVE"
+    termination_reason: Optional[str] = None
 
     def add_packet(self, packet, directional_key: DirectionalKey) -> None:
         timestamp = packet.timestamp
@@ -134,17 +136,22 @@ class FlowManager:
         return flow
 
     def expire(self, timestamp: float) -> list[Flow]:
-        expired_keys = [
-            key
-            for key, flow in self.flows.items()
-            if timestamp - flow.last_seen >= self.flow_timeout
-        ]
-        for key in expired_keys:
-            self.expired_flows.append(self.flows.pop(key))
-        return [flow for flow in self.expired_flows if flow.last_seen <= timestamp]
+        expired = []
+
+        for key, flow in list(self.flows.items()):
+            if timestamp - flow.last_seen >= self.flow_timeout:
+                flow.status = "EXPIRED"
+                flow.termination_reason = "TIMEOUT"
+                expired.append(self.flows.pop(key))
+
+        self.expired_flows.extend(expired)
+        return expired
 
     def close_all(self) -> list[Flow]:
         closed = list(self.flows.values())
+        for flow in closed:
+            flow.status = "CLOSED"
+            flow.termination_reason = "END_OF_CAPTURE"
         self.expired_flows.extend(closed)
         self.flows.clear()
         return closed

@@ -36,7 +36,11 @@ from datetime import datetime
 
 DEFAULT_INTERFACE = "enp0s3"
 DEFAULT_OUTPUT = "capture.pcap"
-DEFAULT_SNAPLEN = 65535 # số bytes lấy được từ 1 packet Ethernet
+DEFAULT_SNAPLEN = 65535  # số bytes lấy được từ 1 packet Ethernet
+PCAP_MAGIC = 0xA1B2C3D4
+PCAP_VERSION_MAJOR = 2
+PCAP_VERSION_MINOR = 4
+PCAP_LINKTYPE_ETHERNET = 1
 
 # Linux Ethernet protocol: nhận tất cả các Ethernet protocols IPv4, IPv6, 802.1Q
 # ETH_P_ALL = 0x0003
@@ -69,9 +73,13 @@ class PcapWriter:
     """
 
     def __init__(self, filename):
-        self.filename = filename
+        self.filename = os.fspath(filename)
+        output_path = os.path.abspath(self.filename)
+        output_directory = os.path.dirname(output_path)
+        if output_directory:
+            os.makedirs(output_directory, exist_ok=True)
 
-        self.file = open(filename, "wb")
+        self.file = open(self.filename, "wb")
 
         # PCAP Global Header là header của file .pcap định dạng format chung cho toàn bộ các gói tin được lưu trong file .pcap
         #
@@ -86,13 +94,13 @@ class PcapWriter:
 
         global_header = struct.pack(
             "<IHHIIII",
-            0xA1B2C3D4,
-            2,
-            4,
+            PCAP_MAGIC,
+            PCAP_VERSION_MAJOR,
+            PCAP_VERSION_MINOR,
             0,
             0,
             DEFAULT_SNAPLEN,
-            1
+            PCAP_LINKTYPE_ETHERNET,
         )
         # Hãy tạo cho tôi một PCAP file (PCAP magic number 0xA1B2C3D4) 
         # theo format PCAP 2.4 (version_major : 2, version_minor : 4), 
@@ -109,6 +117,11 @@ class PcapWriter:
         """
         Write one Ethernet frame into the PCAP file.
         """
+        packet_data = bytes(packet_data)
+        if len(packet_data) > DEFAULT_SNAPLEN:
+            raise ValueError(
+                f"Packet is larger than snaplen ({DEFAULT_SNAPLEN} bytes)"
+            )
 
         timestamp = time.time()
 
@@ -257,7 +270,7 @@ def capture_packets(interface, output):
         #   Receive all Ethernet protocols.
         #
         raw_socket = socket.socket(
-            socket.AF_PACKET, # truy cập trức tiếp tầng Ethernet
+            socket.AF_PACKET, # truy cập trực tiếp tầng Ethernet
             socket.SOCK_RAW, # loại socket, nhận nguyên toàn bộ khung dữ liệu
             socket.htons(ETH_P_ALL) # bắt mọi gói tin đi qua card mạng ở mọi giao thức
         )

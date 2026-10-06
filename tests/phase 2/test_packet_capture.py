@@ -12,9 +12,6 @@ sys.path.insert(0, str(PHASE_TWO_DIR))
 from packet_capture import PcapWriter
 
 
-CAPTURE_FILE = PHASE_TWO_DIR / "capture.pcap"
-
-
 class PacketCaptureTests(unittest.TestCase):
     def test_writer_creates_readable_pcap(self):
         packet_data = bytes.fromhex("00112233445566778899aabb0800")
@@ -33,13 +30,36 @@ class PacketCaptureTests(unittest.TestCase):
         self.assertEqual(captured_length, len(packet_data))
         self.assertEqual(wire_length, len(packet_data))
 
-    def test_existing_capture_file_has_pcap_header(self):
-        self.assertTrue(CAPTURE_FILE.is_file(), f"Missing PCAP file: {CAPTURE_FILE}")
-        self.assertGreaterEqual(CAPTURE_FILE.stat().st_size, 24)
-        self.assertIn(
-            CAPTURE_FILE.read_bytes()[:4],
-            (bytes.fromhex("d4c3b2a1"), bytes.fromhex("a1b2c3d4")),
+    def test_writer_creates_nested_output_with_standard_global_header(self):
+        packet_data = bytes.fromhex("00112233445566778899aabb0800")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "WEB" / "XSS" / "xss.pcap"
+            writer = PcapWriter(output)
+            writer.write_packet(packet_data)
+            writer.close()
+
+            contents = output.read_bytes()
+
+        self.assertEqual(
+            struct.unpack_from("<IHHIIII", contents),
+            (0xA1B2C3D4, 2, 4, 0, 0, 65535, 1),
         )
+        self.assertEqual(len(contents), 24 + 16 + len(packet_data))
+
+    def test_writer_creates_valid_pcap_header(self):
+        packet_data = bytes.fromhex("00112233445566778899aabb0800")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "capture_fixture.pcap"
+            writer = PcapWriter(output)
+            writer.write_packet(packet_data)
+            writer.close()
+
+            contents = output.read_bytes()
+
+        self.assertGreaterEqual(len(contents), 24)
+        self.assertIn(contents[:4], (bytes.fromhex("d4c3b2a1"), bytes.fromhex("a1b2c3d4")))
 
 
 if __name__ == "__main__":
