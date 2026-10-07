@@ -69,8 +69,11 @@ def read_pcap_packets(file):
 class PacketDecoder:
     """Decode Ethernet/IPv4/transport layers and build Packet objects."""
 
-    def __init__(self, output_mode="normal"):
+    def __init__(self, output_mode="normal", keep_packets=True):
         self.output_mode = output_mode
+        # keep_packets=False lets streaming callers decode without storing every Packet.
+        self.keep_packets = keep_packets
+        self.decoded_packets = 0
         self.total_packets = 0
         self.ipv4_packets = 0
         self.tcp_packets = 0
@@ -209,15 +212,17 @@ class PacketDecoder:
                 data.get("icmp"),
             ),
         )
-        self.packets.append(packet)
+        self.decoded_packets += 1
+        if self.keep_packets:
+            self.packets.append(packet)
         self._log_packet(packet)
         return packet
 
     def _log_packet(self, packet):
         if self.output_mode == "verbose":
-            LOGGER.info("[%d] %s", len(self.packets), packet.summary())
+            LOGGER.info("[%d] %s", self.decoded_packets, packet.summary())
         elif self.output_mode == "debug":
-            LOGGER.debug("Packet #%d", len(self.packets))
+            LOGGER.debug("Packet #%d", self.decoded_packets)
             ip_flags = []
             if packet.dont_fragment:
                 ip_flags.append("DF")
@@ -407,24 +412,35 @@ class PacketDecoder:
             self.icmp_packets,
             self.fragmented_packets,
             self.other_packets,
-            len(self.packets),
+            self.decoded_packets,
         )
+
+
+def iter_decoded_packets(filename, decoder, packet_limit=None):
+    """Yield decoded Packet objects one by one from a classic PCAP file.
+
+    Raises FileNotFoundError, ValueError or dpkt errors to the caller.
+    """
+    with open(filename, "rb") as file:
+        for timestamp, raw_packet, capture_length, wire_length in read_pcap_packets(file):
+            decoder.total_packets += 1
+            packet = decoder.decode_ethernet(
+                raw_packet,
+                timestamp=timestamp,
+                capture_length=capture_length,
+                wire_length=wire_length,
+            )
+            if packet is not None:
+                yield packet
+            if packet_limit is not None and decoder.total_packets >= packet_limit:
+                return
 
 
 def decode_pcap(filename, packet_limit=None, output_mode="normal"):
     decoder = PacketDecoder(output_mode=output_mode)
     try:
-        with open(filename, "rb") as file:
-            for timestamp, raw_packet, capture_length, wire_length in read_pcap_packets(file):
-                decoder.total_packets += 1
-                decoder.decode_ethernet(
-                    raw_packet,
-                    timestamp=timestamp,
-                    capture_length=capture_length,
-                    wire_length=wire_length,
-                )
-                if packet_limit is not None and decoder.total_packets >= packet_limit:
-                    break
+        for _packet in iter_decoded_packets(filename, decoder, packet_limit):
+            pass
     except FileNotFoundError:
         LOGGER.error("PCAP file not found: %s", filename)
         return decoder

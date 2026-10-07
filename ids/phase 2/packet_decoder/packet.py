@@ -29,6 +29,9 @@ class Packet:
     dont_fragment: bool = False
     ip_options: bytes = field(default_factory=bytes)
     ip_fragment_key: Optional[tuple] = None
+    # Set by the Phase 4 IP defragmenter when this packet was rebuilt from fragments.
+    reassembled_fragments: int = 0
+    defrag_anomalies: tuple = ()
 
     src_port: Optional[int] = None
     dst_port: Optional[int] = None
