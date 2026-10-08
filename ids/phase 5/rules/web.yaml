@@ -1,0 +1,103 @@
+# Web exploit rules (signature / regex). Evaluated on every complete HTTP
+# request after Phase 4 reassembly and normalization.
+#
+# Buffers (see technical_report_phase5.md):
+#   http_uri          decoded + path resolved + SQL comments removed + lowercase
+#   http_uri_decoded  URL-decoded only (case and comments kept)
+#   http_uri_raw      exactly as sent
+#   http_body / http_body_decoded, http_header, http_host, http_user_agent ...
+
+rules:
+  - sid: 10004
+    rev: 1
+    name: SQL_INJECTION_UNION_SELECT
+    description: SQL UNION SELECT injection attempt in an HTTP request
+    category: web-attack
+    protocol: tcp
+    destination:
+      ports: $HTTP_PORTS
+    flow:
+      direction: to_server
+    detection:
+      type: content
+      buffers: [http_uri, http_body]
+      patterns: ["union select", "union all select", "union distinct select"]
+      nocase: true
+    severity: high
+    tags: [web, sql-injection]
+
+  - sid: 10005
+    rev: 1
+    name: SQL_COMMENT_EVASION
+    description: SQL UNION SELECT hidden with inline comments (UNION/**/SELECT, /*!50000SELECT*/)
+    category: web-attack
+    protocol: tcp
+    destination:
+      ports: $HTTP_PORTS
+    flow:
+      direction: to_server
+    detection:
+      type: regex
+      # Comments are still present in the *_decoded buffers.
+      # The comment pattern /\*[^*]*\*+(?:[^/*][^*]*\*+)*/ never backtracks (no ".*?").
+      buffers: [http_uri_decoded, http_body_decoded]
+      patterns:
+        - 'union(?:\s*/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)+\s*(?:(?:all|distinct)\b[\s/*]*)?select'
+        - 'union\s+(?:all|distinct)(?:\s*/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)+\s*select'
+        - 'union\s*/\*!\d*\s*(?:(?:all|distinct)\s+)?select'
+      nocase: true
+    severity: high
+    # Same request also matches 10004 once comments are removed: report the
+    # evasion (more specific) instead of two alerts for one request.
+    supersedes: [10004]
+    tags: [web, sql-injection, evasion]
+
+  - sid: 10006
+    rev: 1
+    name: COMMAND_INJECTION
+    description: OS command injection attempt (shell separator followed by a command, or sensitive file path)
+    category: web-attack
+    protocol: tcp
+    destination:
+      ports: $HTTP_PORTS
+    flow:
+      direction: to_server
+    detection:
+      type: content
+      buffers: [http_uri, http_body]
+      patterns:
+        - ";cat "
+        - "|cat "
+        - "&&cat "
+        - "; cat "
+        - "| cat "
+        - "&& cat "
+        - ";wget "
+        - "|wget "
+        - ";curl "
+        - "|curl "
+        - "/etc/passwd"
+        - "/etc/shadow"
+        - "/bin/sh"
+        - "/bin/bash"
+      nocase: true
+    severity: critical
+    tags: [web, command-injection]
+
+  - sid: 10007
+    rev: 1
+    name: XSS_SCRIPT_TAG
+    description: Cross-site scripting attempt with a <script> tag
+    category: web-attack
+    protocol: tcp
+    destination:
+      ports: $HTTP_PORTS
+    flow:
+      direction: to_server
+    detection:
+      type: content
+      buffers: [http_uri, http_body]
+      pattern: "<script"
+      nocase: true
+    severity: high
+    tags: [web, xss]

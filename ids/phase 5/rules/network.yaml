@@ -1,0 +1,59 @@
+# Network anomaly rules (protocol / threshold / DNS features).
+
+rules:
+  - sid: 10001
+    rev: 1
+    name: ICMP_TRAFFIC
+    description: ICMP packet detected (pipeline smoke test)
+    category: network-anomaly
+    # Matches every ping, so the BENIGN captures would alert. Enable it only to
+    # check that the pipeline works:  --enable 10001
+    enabled: false
+    protocol: icmp
+    detection:
+      type: protocol
+    suppress: 60
+    severity: low
+    tags: [icmp, test]
+
+  - sid: 10009
+    rev: 1
+    name: ICMP_FLOOD
+    description: ICMP echo request flood from one source
+    category: network-anomaly
+    protocol: icmp
+    flow:
+      direction: to_server
+    detection:
+      type: threshold
+      icmp_type: [8]
+      count: 100
+      seconds: 1
+      track: by_src
+    suppress: 60
+    severity: high
+    tags: [icmp, flood, dos]
+
+  - sid: 10010
+    rev: 1
+    name: POSSIBLE_DNS_TUNNEL
+    description: Many long, random-looking subdomains of one domain queried by one source
+    category: network-anomaly
+    protocol: udp
+    destination:
+      ports: $DNS_PORTS
+    flow:
+      direction: to_server
+    detection:
+      type: dns_tunnel
+      # 32 random hex characters have an entropy of 3.0-3.9 bits/char (never
+      # above 4.0), while CDN names reach 3.5-3.8, so a single query is never
+      # enough: the rule needs `count` distinct such subdomains of the same
+      # base domain within `seconds`.
+      min_subdomain_length: 24
+      min_entropy: 3.0
+      count: 10
+      seconds: 60
+    suppress: 300
+    severity: high
+    tags: [dns, tunneling, exfiltration]

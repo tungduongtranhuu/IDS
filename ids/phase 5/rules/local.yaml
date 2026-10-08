@@ -1,0 +1,21 @@
+# Your own rules. Same schema as the other files; use SIDs from 20000 up so
+# they never collide with the shipped rules (duplicate SIDs are rejected).
+#
+# Example (remove the leading "#" to enable):
+#
+#  - sid: 20001
+#    rev: 1
+#    name: LOCAL_ADMIN_PANEL_ACCESS
+#    description: Request to the admin panel from outside the lab
+#    category: policy
+#    protocol: tcp
+#    destination:
+#      ports: $HTTP_PORTS
+#    detection:
+#      type: content
+#      buffer: http_path
+#      pattern: "/admin"
+#    severity: low
+#    tags: [web, policy]
+
+rules: []

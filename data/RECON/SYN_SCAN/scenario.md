@@ -26,6 +26,7 @@ sudo ./dataset/capture_dataset.sh syn_scan
 
 ## Kỳ vọng pipeline
 - Decode: nhiều gói chỉ cờ SYN từ cùng 1 src_ip tới nhiều dst_port.
-- Behavioral: SYN-only flows >= 20 cổng trong cửa sổ ~5s từ cùng src.
-- Detection: **1 alert rule 10002**, severity medium.
+- Behavioral: scan episode có technique `half_open` (không bắt tay nào hoàn
+  tất), >= 20 cổng trong cửa sổ 5s.
+- Detection: **1 alert rule 10002**, severity medium (không có 10003 hay 10008).
 - Evidence kỳ vọng: src_ip=192.168.100.10, danh sách dst_port bị quét.

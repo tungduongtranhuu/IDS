@@ -242,7 +242,9 @@ uri_normalized : /etc/passwd                                      ← PATH_TRAVE
 
 ## 6. `anti_evasion.py` – pipeline và CLI
 
-`AntiEvasionPipeline(flow_timeout, active_timeout, fragment_timeout, overlap_policy, max_stream_bytes, on_defrag_event, on_stream_end)`:
+`AntiEvasionPipeline(flow_timeout, active_timeout, fragment_timeout, overlap_policy, max_stream_bytes, on_defrag_event, on_stream_end, on_packet, on_http_request)`:
+
+> Cập nhật Phase 5: thêm hai hook `on_packet(flow, packet, is_forward)` (gọi sau khi `TcpReassembler` đã xử lý gói) và `on_http_request(stream, request)` (gọi ngay khi một request đủ dữ liệu), và trường `HttpRequest.body_decoded` (body đã URL-decode nhưng còn giữ hoa/thường và comment, cho rule regex). Cả ba đều tùy chọn, hành vi cũ giữ nguyên.
 
 | Phương thức | Hoạt động |
 |---|---|

@@ -214,6 +214,7 @@ class HttpRequest:
     uri_decoded: str = ""
     path_normalized: str = ""
     uri_normalized: str = ""
+    body_decoded: str = ""
     body_normalized: str = ""
     decode_rounds: int = 0
     anomalies: tuple[str, ...] = ()
@@ -280,6 +281,7 @@ def build_http_request(
         uri_decoded=uri_decoded,
         path_normalized=path_normalized,
         uri_normalized=uri_normalized,
+        body_decoded=body_view.decoded,
         body_normalized=body_view.normalized,
         decode_rounds=max(rounds, body_view.decode_rounds),
         anomalies=tuple(sorted(anomalies)),

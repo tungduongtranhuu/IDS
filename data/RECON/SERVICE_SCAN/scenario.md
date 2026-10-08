@@ -27,7 +27,10 @@ sudo ./dataset/capture_dataset.sh service_scan
 
 ## Kỳ vọng pipeline
 - Flow: nhiều flow TCP ESTABLISHED tới các cổng mở, có trao đổi payload probe.
-- Behavioral: unique_dst_ports >= 10 trong ~3s (có bắt tay hoàn chỉnh).
-- Detection: **1 alert rule 10008**, severity medium.
-- Lưu ý: có thể trùng tín hiệu với 10002/10003 — kiểm tra taxonomy để không
-  đếm trùng một hành vi thành nhiều alert khác loại.
+- Behavioral: scan episode có technique `service` (nguồn gửi dữ liệu sau bắt
+  tay), >= 10 cổng trong 5s. Episode chỉ đóng sau 10s im lặng, nên phần quét
+  cổng và phần probe (cách nhau vài giây) nằm trong cùng một episode.
+- Detection: **1 alert rule 10008**, severity medium. Mỗi episode chỉ mang một
+  nhãn kỹ thuật, nên không có thêm 10002/10003 cho cùng lần quét.
+- Lưu ý: nếu victim chỉ mở dịch vụ tự gửi banner (vd chỉ SSH), nmap không gửi
+  probe nào và episode sẽ được xếp `connect` (10003). Victim lab có HTTP nên ổn.

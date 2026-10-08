@@ -1,0 +1,57 @@
+# Reconnaissance rules (behavioral). One source probing many TCP ports of one
+# target forms a "scan episode". The episode is closed after a few seconds of
+# silence and gets exactly ONE technique, so these three rules never fire
+# together on the same scan:
+#
+#   half_open  SYN probes, the source never completes a handshake   (nmap -sS)
+#   connect    handshakes completed, no application data sent       (nmap -sT)
+#   service    handshakes completed AND probe data sent             (nmap -sV)
+#
+# unique_dst_ports / seconds: most distinct ports first probed within any
+# window of `seconds` during the episode.
+
+rules:
+  - sid: 10002
+    rev: 1
+    name: TCP_SYN_SCAN
+    description: Half-open TCP SYN port scan (many ports probed, no handshake completed)
+    category: reconnaissance
+    protocol: tcp
+    detection:
+      type: scan
+      technique: half_open
+      unique_dst_ports: 20
+      seconds: 5
+    suppress: 300
+    severity: medium
+    tags: [recon, port-scan, syn-scan]
+
+  - sid: 10003
+    rev: 1
+    name: PORT_SCAN
+    description: TCP connect port scan (full handshakes to many ports, no data)
+    category: reconnaissance
+    protocol: tcp
+    detection:
+      type: scan
+      technique: connect
+      unique_dst_ports: 30
+      seconds: 5
+    suppress: 300
+    severity: high
+    tags: [recon, port-scan, connect-scan]
+
+  - sid: 10008
+    rev: 1
+    name: SERVICE_SCAN
+    description: Service / version scan (port scan followed by probes to the open services)
+    category: reconnaissance
+    protocol: tcp
+    detection:
+      type: scan
+      technique: service
+      unique_dst_ports: 10
+      seconds: 5
+    suppress: 300
+    severity: medium
+    tags: [recon, service-scan]

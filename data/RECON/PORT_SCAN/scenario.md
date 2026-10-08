@@ -10,12 +10,14 @@
 | Kỳ vọng alert | **CÓ** |
 
 ## Mô tả
-Quét một dải cổng (1–100) của victim. Test state tracking theo src_ip và
-ngưỡng `unique_dst_ports` trong cửa sổ thời gian.
+Connect scan (`-sT`) một dải cổng (1–100) của victim: trên cổng mở, nmap hoàn
+tất bắt tay rồi đóng ngay, không gửi dữ liệu. Test state tracking theo cặp
+(src, dst) và ngưỡng `unique_dst_ports` trong cửa sổ thời gian. Khác
+`syn_scan` ở **kỹ thuật** (bắt tay hoàn tất), không chỉ ở số cổng.
 
 ## Lệnh sinh traffic (generator)
 ```bash
-sudo nmap -sS -p 1-100 192.168.100.30
+nmap -sT -p 1-100 192.168.100.30     # không cần sudo
 ```
 
 ## Capture (IDS)
@@ -25,7 +27,8 @@ sudo ./dataset/capture_dataset.sh port_scan
 ```
 
 ## Kỳ vọng pipeline
-- Flow: 1 src_ip → nhiều dst_port riêng biệt.
-- Behavioral: unique_dst_ports >= 30 trong time_window ~5s.
-- Detection: **1 alert rule 10003**, severity high.
-- Evidence: source_ip=192.168.100.10, destination_ip=192.168.100.30, số cổng.
+- Flow: 1 src_ip → 100 dst_port; cổng mở có `handshake_completed`, cổng đóng trả RST.
+- Behavioral: scan episode có technique `connect`, >= 30 cổng trong 5s.
+- Detection: **1 alert rule 10003**, severity high (không có 10002 hay 10008).
+- Evidence: source_ip=192.168.100.10, destination_ip=192.168.100.30,
+  `ports_probed=100`, `handshakes_completed` = số cổng mở.

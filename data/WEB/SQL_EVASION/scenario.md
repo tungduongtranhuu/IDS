@@ -17,8 +17,8 @@ thẳng. Đây là cặp "2 PCAP cho cùng 1 attack" với `sql_injection` — c
 ## Lệnh sinh traffic (generator)
 ```bash
 curl "http://192.168.100.30/index.php?id=1%20UNION/**/SELECT/**/1,2"
-# tuỳ chọn: sqlmap -u "http://192.168.100.30/index.php?id=1" \
-#                  --tamper=space2comment --batch
+# tuỳ chọn (WITH_SQLMAP=1, sinh thêm nhiều alert khác):
+# sqlmap -u "http://192.168.100.30/index.php?id=1" --tamper=space2comment --batch
 ```
 
 ## Capture (IDS)
@@ -29,6 +29,9 @@ sudo ./dataset/capture_dataset.sh sql_evasion
 
 ## Kỳ vọng pipeline
 - Rule signature thẳng (`union select`) **KHÔNG** khớp trên payload thô.
-- Normalization: xoá/chuẩn hoá comment → `union select`.
-- Detection: **1 alert rule 10005** (regex), severity high.
+- Normalization: xoá/chuẩn hoá comment → `union select` (buffer `http_uri`).
+- Regex 10005 chạy trên `http_uri_decoded` (còn giữ comment) → khớp `UNION/**/SELECT`.
+- Detection: **1 alert rule 10005** (regex), severity high. 10004 cũng khớp
+  bản chuẩn hoá nhưng bị 10005 `supersedes` trên cùng request
+  (evidence `superseded_sids: [10004]`).
 - Đây là điểm minh hoạ đắt giá cho anti-evasion trong báo cáo/CV.

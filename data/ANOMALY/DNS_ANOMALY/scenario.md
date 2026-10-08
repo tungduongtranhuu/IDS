@@ -28,6 +28,13 @@ sudo ./dataset/capture_dataset.sh dns_anomaly
 ```
 
 ## Kỳ vọng pipeline
-- Feature: query_length > 50, entropy > 4.0, queries_per_second cao.
+- Feature mỗi truy vấn: subdomain = các label trừ 2 label cuối (`example.com`);
+  `<32 hex>` có độ dài 32 và entropy 3.0–3.9 bit/ký tự.
+- Ngưỡng (Phase 5, `rules/network.yaml`): subdomain >= 24 ký tự, entropy >= 3.0,
+  và **>= 10 subdomain khác nhau của cùng domain gốc** từ cùng nguồn trong 60s.
+- Ngưỡng gốc của roadmap (query_length > 50, entropy > 4.0) **không bao giờ**
+  khớp traffic này: tên dài 44 ký tự, và 32 ký tự hex không thể vượt 4.0 bit
+  (tối đa log2(16) = 4). Tên CDN bình thường đạt 3.5–3.8 bit, nên phải dựa vào
+  sự lặp lại dưới cùng một domain chứ không phải một truy vấn đơn lẻ.
 - Detection: **1 alert rule 10010**, severity high.
 - Đây là rule nâng cao (không dùng Aho-Corasick) — kiểm tra ngưỡng feature.
