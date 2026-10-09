@@ -11,8 +11,8 @@
 
 ## Mô tả
 Request HTTP mang payload `UNION SELECT` dạng "đẹp" (không obfuscate) tới web
-app test. Đây là bản đối chứng cho `sql_evasion`: chứng minh signature khớp
-payload thẳng. Test signature detection (Aho-Corasick) trên buffer `http_uri`.
+app test: chứng minh signature khớp payload thẳng. Test signature detection
+(Aho-Corasick) trên buffer `http_uri`.
 
 ## Lệnh sinh traffic (generator)
 ```bash

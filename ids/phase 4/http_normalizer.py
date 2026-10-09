@@ -4,7 +4,7 @@ Turns the reassembled client -> server byte stream into HTTP requests with
 three views of the URI, so rules match the meaning instead of the encoding:
 
     uri_raw         exactly as sent                  (evidence)
-    uri_decoded     URL-decoded, case kept           (regex rules, e.g. SID 10005)
+    uri_decoded     URL-decoded, case kept           (regex rules)
     uri_normalized  decoded + path resolved + SQL comments removed
                     + HTML entities + lowercase + whitespace collapsed
                                                       (content rules, e.g. SID 10004)

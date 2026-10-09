@@ -18,7 +18,7 @@ Phase 4 làm các mục của "PHASE 4 – ANTI-EVASION" trong `flow for build/f
 | `ids/phase 4/tcp_reassembly.py` | 350 | Ráp stream TCP theo sequence number, mỗi chiều riêng |
 | `ids/phase 4/http_normalizer.py` | 520 | Giải mã URL nhiều lớp, chuẩn hoá path / text, parser HTTP chạy tăng dần |
 | `ids/phase 4/anti_evasion.py` | 310 | `AntiEvasionPipeline` nối Phase 2 → 3 → 4, CLI ghi báo cáo |
-| `tests/phase 4/` | | 94 test, bộ sinh PCAP tấn công, thư mục `results/` |
+| `tests/phase 4/` | | 93 test, bộ sinh PCAP tấn công, thư mục `results/` |
 
 ---
 
@@ -200,7 +200,7 @@ Bài tập trong `doc_for_phase.md` ("UNI", "ON SE", "LECT" gửi sai thứ tự
 | Trường | Cách tạo | Rule dùng (theo `flow_build_IDS.md`) |
 |---|---|---|
 | `uri_raw` | Nguyên văn | Bằng chứng trong alert |
-| `uri_decoded` | Giải mã `%XX` / `%uXXXX` lặp lại (tối đa 3 lần); `+` → khoảng trắng chỉ trong query; gỡ overlong UTF-8; bỏ NUL; **giữ nguyên hoa/thường và comment** | SID 10005 (regex `union\s*/\*.*?\*/\s*select`) |
+| `uri_decoded` | Giải mã `%XX` / `%uXXXX` lặp lại (tối đa 3 lần); `+` → khoảng trắng chỉ trong query; gỡ overlong UTF-8; bỏ NUL; **giữ nguyên hoa/thường và comment** | Rule regex cần thấy dạng gốc (hoa/thường, comment) |
 | `uri_normalized` | Từ `uri_decoded`: chuẩn hoá path (`\` → `/`, gộp `//`, xử lý `.` và `..`), giải mã HTML entity, bỏ comment SQL `/* */` (giữ phần thân của `/*!50000 ... */` vì MySQL vẫn chạy phần đó), chữ thường, gộp khoảng trắng | SID 10004 `union select`, 10006 `;cat ` / `/etc/passwd`, 10007 `<script` |
 | `body_normalized` | Như trên. Nếu `Content-Type` là form-urlencoded thì giải mã URL trước | Rule trên body sau này |
 
@@ -285,14 +285,14 @@ HTTP normalization: requests=.. anomalies={..}
 
 ## 7. Test và kết quả
 
-Chạy: `.venv/Scripts/python -m unittest discover -s "tests/phase 4"` → **94/94 pass** (khoảng 8 giây). Phase 2 (4) và Phase 3 (36) vẫn pass.
+Chạy: `.venv/Scripts/python -m unittest discover -s "tests/phase 4"` → **93/93 pass** (khoảng 8 giây). Phase 2 (4) và Phase 3 (36) vẫn pass.
 
 | File test | Số test | Nội dung |
 |---|---|---|
 | `test_sparse_buffer.py` | 7 | ranges / gaps, policy first / last, overlap cùng nội dung, `pop_front`, byte 0 |
 | `test_ip_defrag.py` | 18 | Frame không phải mảnh đi thẳng; ghép đúng thứ tự / ngược / xen kẽ 2 datagram; duplicate; overlap conflict (first vs last); tiny fragment; độ dài sai; VLAN; quá lớn; timeout; flush; bảng đầy; quá nhiều mảnh |
 | `test_tcp_reassembly.py` | 24 | Wraparound; UNI / ON SE / LECT; retransmission giống / khác; overlap một phần; policy first / last; dữ liệu cũ; ngoài window; gap; giới hạn độ sâu; midstream; SYN mang data; payload trong RST; hook với FlowManager thật và flow tiếp nối khi active timeout |
-| `test_http_normalizer.py` | 31 | Giải mã (double, `%u`, overlong, NUL, `%zz`, `+`); path; comment SQL và MySQL; ReDoS; HTML entity; **các buffer khớp đúng rule SID 10004–10007** với nhiều biến thể né tránh; URI có khoảng trắng; parser (pipeline, nạp từng byte, form, chunked, chưa đủ dữ liệu, không phải HTTP, smuggling, header quá dài) |
+| `test_http_normalizer.py` | 30 | Giải mã (double, `%u`, overlong, NUL, `%zz`, `+`); path; comment SQL và MySQL; ReDoS; HTML entity; **các buffer khớp đúng rule SID 10004, 10006, 10007** với nhiều biến thể né tránh; URI có khoảng trắng; parser (pipeline, nạp từng byte, form, chunked, chưa đủ dữ liệu, không phải HTTP, smuggling, header quá dài) |
 | `test_anti_evasion.py` | 14 | Chạy CLI trên 7 PCAP tấn công tự sinh và 3 PCAP BENIGN thật, ghi kết quả vào `results/`; gọi API pipeline trực tiếp |
 
 ### 7.1 Các PCAP tấn công (`tests/phase 4/pcaps/`, sinh bởi `pcap_factory.py`, mở được bằng Wireshark)

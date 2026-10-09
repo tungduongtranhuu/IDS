@@ -37,7 +37,6 @@ SCENARIOS=(
   "port_scan|RECON|PORT_SCAN|RECON/PORT_SCAN/port_scan.pcap|tcp and host ${VICTIM}|30"
   "service_scan|RECON|SERVICE_SCAN|RECON/SERVICE_SCAN/service_scan.pcap|host ${VICTIM}|40"
   "sql_injection|WEB|SQL_INJECTION|WEB/SQL_INJECTION/sql_injection.pcap|tcp port 80 and host ${VICTIM}|20"
-  "sql_evasion|WEB|SQL_EVASION|WEB/SQL_EVASION/sql_comment_evasion.pcap|tcp port 80 and host ${VICTIM}|25"
   "command_injection|WEB|COMMAND_INJECTION|WEB/COMMAND_INJECTION/command_injection.pcap|tcp port 80 and host ${VICTIM}|20"
   "xss|WEB|XSS|WEB/XSS/xss.pcap|tcp port 80 and host ${VICTIM}|20"
   "icmp_flood|ANOMALY|ICMP_FLOOD|ANOMALY/ICMP_FLOOD/icmp_flood.pcap|icmp and host ${VICTIM}|15"
@@ -53,7 +52,7 @@ usage() {
 Dung: sudo ./capture_dataset.sh <scenario|all|list>
 
   list                     Liet ke tat ca scenario
-  all                      Capture lan luot ca 13 scenario (tung cua so timeout)
+  all                      Capture lan luot ca 12 scenario (tung cua so timeout)
   <ten_scenario>           Capture dung 1 scenario
 
 Bien moi truong ghi de duoc: IFACE, VICTIM, GENERATOR
@@ -123,7 +122,7 @@ info "IDS interface=${IFACE}  victim=${VICTIM}  generator=${GENERATOR}"
 info "Data root: ${DATA}"
 
 if [ "$1" = "all" ]; then
-  info "Che do ALL: se chay lan luot 13 scenario."
+  info "Che do ALL: se chay lan luot 12 scenario."
   info "Ben generator hay chay:  ./attack_runner.sh all   (bat dau cung luc)."
   read -r -p "Nhan Enter de bat dau..." _
   for row in "${SCENARIOS[@]}"; do

@@ -61,13 +61,12 @@ class RuleFiles:
 class DefaultRulesTests(unittest.TestCase):
     def test_shipped_rules_load(self):
         ruleset = load_rules()
-        self.assertEqual(sorted(ruleset.rules), list(range(10001, 10011)))
+        self.assertEqual(sorted(ruleset.rules), [10001, 10002, 10003, 10004, 10006, 10007, 10008, 10009, 10010])
         self.assertFalse(ruleset.get(10001).enabled)
-        self.assertEqual(len(ruleset.enabled_rules()), 9)
+        self.assertEqual(len(ruleset.enabled_rules()), 8)
         self.assertEqual(ruleset.get(10004).event, EVENT_HTTP)
         self.assertEqual(ruleset.get(10002).event, EVENT_SCAN)
         self.assertEqual(ruleset.get(10009).event, EVENT_PACKET)
-        self.assertEqual(ruleset.get(10005).supersedes, (10004,))
 
     def test_variables_are_expanded(self):
         ruleset = load_rules()
@@ -79,7 +78,7 @@ class DefaultRulesTests(unittest.TestCase):
     def test_ground_truth_severities(self):
         ruleset = load_rules()
         expected = {
-            10002: "medium", 10003: "high", 10004: "high", 10005: "high", 10006: "critical",
+            10002: "medium", 10003: "high", 10004: "high", 10006: "critical",
             10007: "high", 10008: "medium", 10009: "high", 10010: "high",
         }
         for sid, severity in expected.items():

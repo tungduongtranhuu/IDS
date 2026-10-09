@@ -2,14 +2,14 @@
 
 Cập nhật: 2026-10-08
 
-Phase 5 làm các mục của "PHASE 5 – RULE ENGINE" trong `flow for build/flow_build_IDS.md` (§25): YAML parser, rule schema, rule validation, SID management, rule matching. Mục tiêu thực tế là **chạy được cả 10 rule của roadmap (§12–§21) trên pipeline Phase 4**, để đối chiếu với bảng ground truth của `dataset/README.md` ngay khi có traffic thật.
+Phase 5 làm các mục của "PHASE 5 – RULE ENGINE" trong `flow for build/flow_build_IDS.md` (§25): YAML parser, rule schema, rule validation, SID management, rule matching. Mục tiêu thực tế là **chạy được các rule của roadmap (§12–§21, trừ SID 10005 đã bỏ) trên pipeline Phase 4**, để đối chiếu với bảng ground truth của `dataset/README.md` ngay khi có traffic thật.
 
 | Hạng mục roadmap | Module |
 |---|---|
 | YAML parser, rule schema, validation, SID management | `rule_loader.py` |
 | Rule matching: signature / regex / protocol | `rule_engine.py` (`ContentMatcher`, `match_payload_rule`) |
 | Rule matching: threshold, scan, DNS (stateful) | `behavior.py` + `rule_engine.py` |
-| Rule set (10 rule, SID 10001–10010) | `rules/*.yaml` |
+| Rule set (9 rule, SID 10001–10010 trừ 10005) | `rules/*.yaml` |
 | CLI, alert JSON lines | `rule_engine.py` |
 
 | File | Dòng (≈) | Vai trò |
@@ -18,7 +18,7 @@ Phase 5 làm các mục của "PHASE 5 – RULE ENGINE" trong `flow for build/fl
 | `ids/phase 5/behavior.py` | 280 | Cửa sổ trượt, scan episode, đặc trưng truy vấn DNS |
 | `ids/phase 5/rule_engine.py` | 780 | `DetectionEngine`, `Alert`, `DetectionPipeline`, CLI |
 | `ids/phase 5/rules/` | | `variables.yaml`, `web.yaml`, `scan.yaml`, `network.yaml`, `local.yaml` |
-| `tests/phase 5/` | | 65 test, bộ sinh PCAP cho 13 scenario, test ground truth trên `data/` |
+| `tests/phase 5/` | | 65 test, bộ sinh PCAP cho 12 scenario, test ground truth trên `data/` |
 
 **Phạm vi so với các phase sau.** Roadmap tách Aho-Corasick (Phase 6), behavior engine (Phase 7) và alert ECS (Phase 8). Ở Phase 5, mọi loại rule đã khớp được, nhưng theo cách đơn giản nhất: content dùng `in`, alert là một dataclass ghi ra JSON lines. Các phase sau thay phần ruột, còn interface giữ nguyên (xem §8).
 
@@ -96,7 +96,7 @@ Biến là danh sách thì được trải phẳng khi nằm trong danh sách: `
 | Buffer | Lấy từ | Đặc điểm |
 |---|---|---|
 | `http_uri` | `HttpRequest.uri_normalized` | Đã decode, chuẩn hoá path, bỏ comment SQL, chữ thường, gộp khoảng trắng |
-| `http_uri_decoded` | `uri_decoded` | Chỉ URL-decode: **còn hoa/thường và comment** (cho regex né tránh) |
+| `http_uri_decoded` | `uri_decoded` | Chỉ URL-decode: **còn hoa/thường và comment** (cho rule regex) |
 | `http_uri_raw` | `uri_raw` | Nguyên văn |
 | `http_path` | `path_normalized` | Path đã chuẩn hoá, chưa lowercase |
 | `http_body` / `http_body_decoded` | `body_normalized` / `body_decoded` | Như hai buffer URI tương ứng (`body_decoded` là trường mới của Phase 4) |
@@ -120,7 +120,7 @@ Mọi lỗi được **gom lại** rồi ném một lần dưới dạng `RuleEr
 
 `RuleSet` giữ rule theo SID: `get(sid)`, `enabled_rules()`, `set_enabled(sid, flag)` (SID lạ → `KeyError`). CLI: `--enable 10001`, `--disable 10004`, `--list-rules`.
 
-Quy ước SID: 10001–10010 là rule của roadmap; `local.yaml` cho rule của người dùng, khuyên dùng từ 20000.
+Quy ước SID: 10001–10010 là rule của roadmap (10005 bỏ trống); `local.yaml` cho rule của người dùng, khuyên dùng từ 20000.
 
 ---
 
@@ -132,28 +132,19 @@ Quy ước SID: 10001–10010 là rule của roadmap; `local.yaml` cho rule củ
 | 10002 | TCP_SYN_SCAN | scan | scan | `half_open`, >= 20 cổng / 5 s | medium |
 | 10003 | PORT_SCAN | scan | scan | `connect`, >= 30 cổng / 5 s | high |
 | 10004 | SQL_INJECTION_UNION_SELECT | web | content | `http_uri`, `http_body`: `union select`, `union all select`, `union distinct select` | high |
-| 10005 | SQL_COMMENT_EVASION | web | regex | `http_uri_decoded`, `http_body_decoded`; **supersedes 10004** | high |
 | 10006 | COMMAND_INJECTION | web | content | `;cat `, `\|cat `, `&&cat `, `/etc/passwd`, `/etc/shadow`, `;wget `, ... | critical |
 | 10007 | XSS_SCRIPT_TAG | web | content | `<script` | high |
 | 10008 | SERVICE_SCAN | scan | scan | `service`, >= 10 cổng / 5 s | medium |
 | 10009 | ICMP_FLOOD | network | threshold | echo request (`icmp_type: [8]`, `to_server`), >= 100 / 1 s theo nguồn | high |
 | 10010 | POSSIBLE_DNS_TUNNEL | network | dns_tunnel | subdomain >= 24 ký tự, entropy >= 3.0, >= 10 subdomain khác nhau / 60 s | high |
 
-### 3.1 Regex 10005 không bị ReDoS
+SID 10005 (SQL_COMMENT_EVASION trong roadmap) đã bị **bỏ khỏi project**, cùng với scenario `sql_evasion`. Biến thể `UNION/**/SELECT` vẫn bị phát hiện: Phase 4 xoá comment SQL trong `http_uri`, nên rule 10004 khớp (test `test_comment_obfuscation_is_normalized_away`).
 
-Roadmap đề xuất `union\s*/\*.*?\*/\s*select`. Với input có rất nhiều `union/*` mà không đóng comment, `.*?` quay lui O(n²), giống vấn đề Phase 4 đã gặp ở `strip_sql_comments`. Phase 5 dùng mẫu comment C "unrolled" `/\*[^*]*\*+(?:[^/*][^*]*\*+)*/`, mẫu này không bao giờ quay lui, và có ba biến thể:
+### 3.1 `supersedes`: một request, một alert
 
-```
-union(?:\s*COMMENT)+\s*(?:(?:all|distinct)\b[\s/*]*)?select     UNION/**/SELECT, UNION/**/ALL/**/SELECT
-union\s+(?:all|distinct)(?:\s*COMMENT)+\s*select                 UNION ALL/**/SELECT
-union\s*/\*!\d*\s*(?:(?:all|distinct)\s+)?select                 UNION /*!50000SELECT*/   (MySQL versioned comment)
-```
+Khi hai rule cùng khớp **một event** (cùng request, cùng gói) và rule A khai báo `supersedes: [B]`, chỉ giữ alert của A (rule cụ thể hơn), và evidence ghi `superseded_sids: [B]`. Request khác trong cùng kết nối vẫn được đánh giá độc lập. Bộ rule hiện tại chưa dùng tính năng này; test `test_supersedes_only_on_the_same_request` minh hoạ bằng hai rule tự định nghĩa (`<script` so với `<script>alert(`).
 
-### 3.2 `supersedes`: một request, một alert
-
-Sau khi Phase 4 bỏ comment, `UNION/**/SELECT` trở thành `union select` trong `http_uri`, nên 10004 **cũng** khớp. Ground truth của `sql_evasion` chỉ có 10005. Thay vì làm rule 10004 "mù" đi, rule 10005 khai báo `supersedes: [10004]`: trên **cùng một event** (cùng request), nếu cả hai khớp thì chỉ giữ rule cụ thể hơn, và evidence ghi `superseded_sids: [10004]`. Request khác trong cùng kết nối vẫn được đánh giá độc lập (test `test_supersedes_only_on_the_same_request`).
-
-### 3.3 `suppress`
+### 3.2 `suppress`
 
 Sau khi một rule báo động cho một khóa, các lần khớp tiếp theo của cùng `(SID, khóa)` trong `suppress` giây bị đếm vào `suppressed` thay vì sinh alert. Khóa là `track` của threshold, `(nguồn, domain gốc)` cho DNS, `(nguồn, đích)` cho scan và các rule khác. ICMP flood 2 giây chỉ cho **1** alert, không phải 2 hay vài nghìn. Với threshold và DNS, cửa sổ được reset sau mỗi lần đạt ngưỡng (giống `threshold type both` của Snort).
 
@@ -229,13 +220,13 @@ API cho phase sau: `detect_pcap(pcap, ruleset) -> DetectionPipeline` (`.alerts`,
 
 ## 7. Test và kết quả
 
-Chạy: `.venv/Scripts/python -m unittest discover -s "tests/phase 5"` → **65 test pass, 11 skip** (các PCAP trong `data/` chưa được capture), khoảng 18 giây. Phase 2 (4), 3 (36), 4 (94) vẫn pass.
+Chạy: `.venv/Scripts/python -m unittest discover -s "tests/phase 5"` → **65 test pass, 10 skip** (các PCAP trong `data/` chưa được capture), khoảng 18 giây. Phase 2 (4), 3 (36), 4 (93) vẫn pass.
 
 | File test | Nội dung |
 |---|---|
-| `test_rule_loader.py` | Bộ rule đi kèm (10 rule, 9 bật, severity khớp ground truth, biến); mọi lớp lỗi ở §2.4; flags `S` / `S+`; endpoint |
+| `test_rule_loader.py` | Bộ rule đi kèm (9 rule, 8 bật, severity khớp ground truth, biến); mọi lớp lỗi ở §2.4; flags `S` / `S+`; endpoint |
 | `test_behavior.py` | Cửa sổ trượt (biên, reset, hết hạn, giới hạn bộ nhớ); nhãn kỹ thuật; đỉnh cổng; episode đóng do im lặng / quá dài; entropy; đặc trưng DNS |
-| `test_rule_engine.py` | **13 scenario tổng hợp → đúng và chỉ đúng SID ground truth**; CLI + JSON; evidence; các PCAP né tránh của Phase 4; ngưỡng (99 so với 100 ICMP, 19 so với 20 cổng, scan chậm, 9 so với 10 DNS); suppress; supersede; biến port; bật / tắt rule; rule tùy biến (SYN flood bằng `tcp_flags`, `packet_payload`); 3 PCAP BENIGN thật → 0 alert |
+| `test_rule_engine.py` | **12 scenario tổng hợp → đúng và chỉ đúng SID ground truth**; CLI + JSON; evidence; các PCAP né tránh của Phase 4; ngưỡng (99 so với 100 ICMP, 19 so với 20 cổng, scan chậm, 9 so với 10 DNS); suppress; supersede; biến port; bật / tắt rule; rule tùy biến (SYN flood bằng `tcp_flags`, `packet_payload`); 3 PCAP BENIGN thật → 0 alert |
 | `test_dataset.py` | Ground truth trên **PCAP thật** trong `data/`; bỏ qua file rỗng; ghi `results/dataset/summary.txt` |
 
 ### 7.1 Scenario tổng hợp (`scenario_factory.py` → `tests/phase 5/pcaps/`)
@@ -246,7 +237,7 @@ Chạy: `.venv/Scripts/python -m unittest discover -s "tests/phase 5"` → **65 
 | syn_scan | `nmap -sS`: 1000 cổng, một cổng nguồn, SYN-ACK → RST | 10002 |
 | port_scan | `nmap -sT -p 1-100`: cổng mở bắt tay xong rồi RST | 10003 |
 | service_scan | `nmap -sV` (user thường): connect scan 1000 cổng, rồi banner SSH, `version.bind` TCP, probe NULL 6 s và `GET / HTTP/1.0` trên 80 / 3000 | 10008 |
-| sql_injection / sql_evasion / command_injection / xss | Đúng URL của `attack_runner.sh` | 10004 / 10005 / 10006 / 10007 |
+| sql_injection / command_injection / xss | Đúng URL của `attack_runner.sh` | 10004 / 10006 / 10007 |
 | icmp_flood | 1500 echo / s trong 2 s, kèm reply | 10009 (1 alert) |
 | dns_anomaly | 30 × `<32 hex>.example.com`, NXDOMAIN | 10010 |
 
@@ -256,7 +247,7 @@ Chạy: `.venv/Scripts/python -m unittest discover -s "tests/phase 5"` → **65 
 |---|---|---|
 | `tcp_out_of_order_sqli` | 10004 | Segment sai thứ tự được ráp lại trước khi khớp |
 | `ip_fragment_xss`, `tcp_seq_wraparound` | 10007 | Mảnh IP gửi ngược thứ tự; seq quay vòng |
-| `http_encoding_evasion` | 10004, 10005 ×2, 10006 ×2 | Mã hoá kép; `/**/` và `/*!50000*/`; `..%2f%c0%af` → `/etc/passwd`; `;cat+` |
+| `http_encoding_evasion` | 10004 ×3, 10006 ×2 | Mã hoá kép, `/**/` và `/*!50000*/` (comment bị xoá → 10004); `..%2f%c0%af` → `/etc/passwd`; `;cat+` |
 | `tcp_overlap_conflict` | **không** (policy first), 10004 (policy last) | Xem giới hạn #1 |
 | `tcp_retransmission` | không | Lưu lượng bình thường |
 

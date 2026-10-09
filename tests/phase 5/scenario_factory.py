@@ -1,4 +1,4 @@
-"""Synthetic PCAPs that imitate the 13 dataset scenarios (dataset/attack_runner.sh).
+"""Synthetic PCAPs that imitate the 12 dataset scenarios (dataset/attack_runner.sh).
 
 The real captures in data/ are made in the lab; until they exist, these files
 reproduce the same traffic shapes byte by byte so the rule engine can be
@@ -243,10 +243,6 @@ def scenario_sql_injection() -> Frames:
     return http_exchange("/index.php?id=1%20UNION%20SELECT%20username%2Cpassword%20FROM%20users", 43001, START)
 
 
-def scenario_sql_evasion() -> Frames:
-    return http_exchange("/index.php?id=1%20UNION/**/SELECT/**/1,2", 43002, START)
-
-
 def scenario_command_injection() -> Frames:
     return http_exchange("/ping.php?host=127.0.0.1;cat+/etc/passwd", 43003, START)
 
@@ -287,7 +283,6 @@ SCENARIOS = {
     "port_scan": scenario_port_scan,
     "service_scan": scenario_service_scan,
     "sql_injection": scenario_sql_injection,
-    "sql_evasion": scenario_sql_evasion,
     "command_injection": scenario_command_injection,
     "xss": scenario_xss,
     "icmp_flood": scenario_icmp_flood,
@@ -296,7 +291,7 @@ SCENARIOS = {
 
 
 def build_all(directory: Path) -> dict[str, Path]:
-    """Write the 13 dataset scenarios plus the Phase 4 evasion PCAPs (prefix evasion_)."""
+    """Write the 12 dataset scenarios plus the Phase 4 evasion PCAPs (prefix evasion_)."""
     directory = Path(directory)
     paths = {name: write_pcap(directory / f"{name}.pcap", build()) for name, build in SCENARIOS.items()}
     for name, build in EVASION_SCENARIOS.items():

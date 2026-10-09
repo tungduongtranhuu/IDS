@@ -1,4 +1,4 @@
-# Web exploit rules (signature / regex). Evaluated on every complete HTTP
+# Web exploit rules (signature). Evaluated on every complete HTTP
 # request after Phase 4 reassembly and normalization.
 #
 # Buffers (see technical_report_phase5.md):
@@ -25,32 +25,6 @@ rules:
       nocase: true
     severity: high
     tags: [web, sql-injection]
-
-  - sid: 10005
-    rev: 1
-    name: SQL_COMMENT_EVASION
-    description: SQL UNION SELECT hidden with inline comments (UNION/**/SELECT, /*!50000SELECT*/)
-    category: web-attack
-    protocol: tcp
-    destination:
-      ports: $HTTP_PORTS
-    flow:
-      direction: to_server
-    detection:
-      type: regex
-      # Comments are still present in the *_decoded buffers.
-      # The comment pattern /\*[^*]*\*+(?:[^/*][^*]*\*+)*/ never backtracks (no ".*?").
-      buffers: [http_uri_decoded, http_body_decoded]
-      patterns:
-        - 'union(?:\s*/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)+\s*(?:(?:all|distinct)\b[\s/*]*)?select'
-        - 'union\s+(?:all|distinct)(?:\s*/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)+\s*select'
-        - 'union\s*/\*!\d*\s*(?:(?:all|distinct)\s+)?select'
-      nocase: true
-    severity: high
-    # Same request also matches 10004 once comments are removed: report the
-    # evasion (more specific) instead of two alerts for one request.
-    supersedes: [10004]
-    tags: [web, sql-injection, evasion]
 
   - sid: 10006
     rev: 1

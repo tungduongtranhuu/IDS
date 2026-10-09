@@ -65,7 +65,7 @@ def sids_of(alerts) -> list[int]:
 
 
 class DatasetScenarioTests(unittest.TestCase):
-    """The 13 dataset scenarios, synthesized: each gives exactly its ground-truth SID."""
+    """The 12 dataset scenarios, synthesized: each gives exactly its ground-truth SID."""
 
     @classmethod
     def setUpClass(cls):
@@ -110,12 +110,6 @@ class DatasetScenarioTests(unittest.TestCase):
         self.assertEqual(evidence["matches"][0]["buffer"], "http_uri")
         self.assertEqual(alerts[0]["destination"]["port"], 80)
 
-    def test_sql_evasion_reports_one_alert(self):
-        alerts = detect_pcap(self.pcaps["sql_evasion"], self.rules).alerts
-        self.assertEqual(sids_of(alerts), [10005])
-        self.assertEqual(alerts[0].evidence["superseded_sids"], [10004])
-        self.assertEqual(alerts[0].evidence["matches"][0]["matched"], "UNION/**/SELECT")
-
     def test_debug_mode_lists_buffers_and_episodes(self):
         text, _alerts = report(self.pcaps["service_scan"], "service_scan", "debug")
         self.assertIn("Scan episode 192.168.100.10 -> 192.168.100.30: technique=service", text)
@@ -147,9 +141,9 @@ class EvasionTests(unittest.TestCase):
         self.assertEqual(self.sids("tcp_seq_wraparound"), [10007])
 
     def test_encoding_evasions(self):
-        # double encoding -> 10004; UNION/**/SELECT and /*!50000SELECT*/ -> 10005 (supersedes 10004);
+        # double encoding, UNION/**/SELECT and /*!50000SELECT*/ -> 10004 (comments removed by Phase 4);
         # ..%2f + %c0%af -> /etc/passwd and ;cat -> 10006; the OR '1'='1 body has no rule yet.
-        self.assertEqual(self.sids("http_encoding_evasion"), [10004, 10005, 10005, 10006, 10006])
+        self.assertEqual(self.sids("http_encoding_evasion"), [10004, 10004, 10004, 10006, 10006])
 
     def test_overlap_policy_decides_what_is_seen(self):
         self.assertEqual(self.sids("tcp_overlap_conflict"), [])
@@ -235,13 +229,12 @@ class EngineBehaviorTests(unittest.TestCase):
         second = syn_scan_frames(list(range(101, 201)), START + 60)
         self.assertEqual(sids_of(self.run_frames(first + second)), [10002])
 
-    def test_supersedes_only_on_the_same_request(self):
+    def test_comment_obfuscation_is_normalized_away(self):
         conv = conversation(43100, 80, START).handshake()
-        conv.send_client(curl_request("/a?id=1%20UNION%20SELECT%201"))
-        conv.send_server(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
         conv.send_client(curl_request("/b?id=1%20UNION/**/SELECT%201"))
         alerts = self.run_frames(conv.close().frames)
-        self.assertEqual(sids_of(alerts), [10004, 10005])
+        self.assertEqual(sids_of(alerts), [10004])
+        self.assertEqual(alerts[0].evidence["uri_normalized"], "/b?id=1 union select 1")
 
     def test_http_rules_follow_the_port_variable(self):
         conv = conversation(43101, 9999, START).handshake()
@@ -301,12 +294,40 @@ class CustomRuleTests(unittest.TestCase):
         pcap = write_pcap(self.path / "mixed.pcap", sorted(frames, key=lambda item: item[0]))
         self.assertEqual(sids_of(detect_pcap(pcap, rules).alerts), [30001, 30002])
 
+    def test_supersedes_only_on_the_same_request(self):
+        (self.path / "custom.yaml").write_text(textwrap.dedent(
+            """
+            rules:
+              - sid: 30010
+                name: SCRIPT_TAG
+                protocol: tcp
+                detection: {type: content, buffer: http_uri, pattern: "<script"}
+                severity: medium
+              - sid: 30011
+                name: SCRIPT_ALERT_CALL
+                protocol: tcp
+                detection: {type: regex, buffer: http_uri_decoded, pattern: '<script>\\s*alert\\('}
+                severity: high
+                supersedes: [30010]
+            """
+        ), encoding="utf-8")
+        rules = load_rules([self.path])
+        conv = conversation(43102, 80, START).handshake()
+        conv.send_client(curl_request("/a?q=%3Cscript%20src=x%3E"))
+        conv.send_server(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        conv.send_client(curl_request("/b?q=%3Cscript%3Ealert(1)"))
+        pcap = write_pcap(self.path / "two.pcap", conv.close().frames)
+        alerts = detect_pcap(pcap, rules).alerts
+        self.assertEqual(sids_of(alerts), [30010, 30011])
+        specific = next(alert for alert in alerts if alert.sid == 30011)
+        self.assertEqual(specific.evidence["superseded_sids"], [30010])
+
 
 class CliTests(unittest.TestCase):
     def test_list_rules(self):
         completed = run_cli("--list-rules")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("10 rules from 5 file(s), 9 enabled", completed.stdout)
+        self.assertIn("9 rules from 5 file(s), 8 enabled", completed.stdout)
         self.assertIn("sid=10001 rev=1 ICMP_TRAFFIC [low] icmp/protocol event=packet disabled", completed.stdout)
 
     def test_invalid_rules_exit_code(self):

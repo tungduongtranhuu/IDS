@@ -1,4 +1,3 @@
-import re
 import sys
 import time
 import unittest
@@ -35,7 +34,6 @@ from http_normalizer import (
 
 # Patterns of the rules planned in flow_build_IDS.md (Phase 6 will own them).
 SID_10004_UNION_SELECT = "union select"
-SID_10005_COMMENT_REGEX = re.compile(r"(?i)union\s*/\*.*?\*/\s*select")
 SID_10006_COMMAND = (";cat ", "|cat ", "&&cat ", "/etc/passwd")
 SID_10007_XSS = "<script"
 
@@ -148,10 +146,6 @@ class RuleBufferTests(unittest.TestCase):
         for uri in variants:
             with self.subTest(uri=uri):
                 self.assertIn(SID_10004_UNION_SELECT, get(uri).uri_normalized)
-
-    def test_sid_10005_regex_runs_on_decoded_uri(self):
-        request = get(b"/p?id=1+UNION%2F%2A%2A%2FSELECT+1")
-        self.assertRegex(request.uri_decoded, SID_10005_COMMENT_REGEX)
 
     def test_sid_10006_command_injection(self):
         request = get(b"/ping?host=127.0.0.1;cat+/etc/passwd")

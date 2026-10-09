@@ -13,7 +13,6 @@ GROUND_TRUTH = {
     "port_scan":         ("RECON/PORT_SCAN/port_scan.pcap",              10003),
     "service_scan":      ("RECON/SERVICE_SCAN/service_scan.pcap",        10008),
     "sql_injection":     ("WEB/SQL_INJECTION/sql_injection.pcap",        10004),
-    "sql_evasion":       ("WEB/SQL_EVASION/sql_comment_evasion.pcap",    10005),
     "command_injection": ("WEB/COMMAND_INJECTION/command_injection.pcap", 10006),
     "xss":               ("WEB/XSS/xss.pcap",                            10007),
     "icmp_flood":        ("ANOMALY/ICMP_FLOOD/icmp_flood.pcap",          10009),
