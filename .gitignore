@@ -4,3 +4,5 @@ flow for build/
 *_pycache__/
 *results*/
 tests/phase 2/cach_test_*
+REPORT/
+tests/

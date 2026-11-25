@@ -24,6 +24,9 @@ Tên thư mục có chứa dấu cách (`ids/phase 2`, `tests/phase 4`), nên lu
 .\.venv\Scripts\python.exe "tests/phase 3/test_flow_manager.py" TimeoutTests
 .\.venv\Scripts\python.exe "tests/phase 3/test_flow_manager.py" TimeoutTests.test_name
 
+# Kiểm tra từng module của phase 3 trên 1 PCAP (http_normal.pcap), output đọc được ở tests/phase 3/per_module/results/<module>.txt
+.\.venv\Scripts\python.exe -m unittest discover -s "tests/phase 3/per_module"
+
 # Helper decode của phase 2: ghi báo cáo cho mọi output mode, mô phỏng cấu trúc data/ trong tests/phase 2/results_decode/
 .\.venv\Scripts\python.exe "tests/phase 2/test_packet_decode.py" --pcap "data/BENIGN/ICMP/icmp_normal.pcap"
 
@@ -57,7 +60,7 @@ raw frame → IpDefragmenter → PacketDecoder.decode_ethernet → FlowManager.a
 ```
 - Xử lý từng gói một, các giai đoạn nối với nhau bằng callback. `AntiEvasionPipeline` có các hook `on_packet(flow, packet, is_forward)`, `on_http_request(stream, request)` và `on_stream_end(stream)`; tầng sau gắn vào đó thay vì đệm toàn bộ capture.
 - **Phase 2** `packet_decoder/`: `PacketDecoder` chuyển raw Ethernet frame thành dataclass `Packet` (5-tuple, flags, payload). `read_pcap_packets` trả về các raw frame, còn `iter_decoded_packets` kết hợp đọc và decode.
-- **Phase 3** `flow_manager.py`: flow hai chiều được định danh bằng 5-tuple chuẩn hóa, có đoán chiều client/server, máy trạng thái TCP, idle timeout theo từng giao thức (`FlowTimeouts`), active timeout để tách các flow dài, và các lần quét định kỳ dựa trên timestamp của gói tin (không dùng đồng hồ thực). Các IP fragment không phải fragment đầu mà đến được flow manager sẽ được đếm vào `ignored_fragments`, vì việc ghép fragment được kỳ vọng xảy ra ở bước trước.
+- **Phase 3** `flow_manager.py` (`FlowManager`, re-export các module con `flow`, `flow_keys`, `flow_timeouts`, `flow_constants`, `flow_utils`; CLI ở `flow_cli.py`): flow hai chiều được định danh bằng 5-tuple chuẩn hóa, có đoán chiều client/server, máy trạng thái TCP, idle timeout theo từng giao thức (`FlowTimeouts`), active timeout để tách các flow dài, và các lần quét định kỳ dựa trên timestamp của gói tin (không dùng đồng hồ thực). Các IP fragment không phải fragment đầu mà đến được flow manager sẽ được đếm vào `ignored_fragments`, vì việc ghép fragment được kỳ vọng xảy ra ở bước trước.
 - **Phase 4**: `sparse_buffer.SparseBuffer` (buffer định vị theo offset, theo dõi lỗ hổng dữ liệu, vùng chồng lấn và chồng lấn xung đột) được dùng chung bởi `ip_defrag` và `tcp_reassembly`. Overlap policy (`first`/`last`) quyết định bản dữ liệu chồng lấn nào được giữ. `http_normalizer` thực hiện percent-decode lặp lại, chuẩn hóa đường dẫn, loại bỏ comment SQL và decode chunked.
 - Các anomaly là hằng chuỗi (`TCP_OVERLAP_CONFLICT`, `FRAG_TINY_FIRST`, ...). `tcp_reassembly.SUSPICIOUS_TCP_ANOMALIES` tách các dấu hiệu né tránh khỏi những anomaly vốn bình thường trên mạng thực.
 - **Phase 5** (`rule_engine.DetectionPipeline` bọc `AntiEvasionPipeline`): `rule_loader` đọc `ids/phase 5/rules/*.yaml` (biến `$NAME`, validate schema, SID duy nhất, `supersedes`) thành `RuleSet`. `DetectionEngine` khớp rule trên 3 loại event: `packet` (protocol, threshold, dns_tunnel, content/regex trên `packet_payload`), `http` (content/regex trên các buffer `http_uri`, `http_uri_decoded`, ... của `HttpRequest`) và `scan` (`behavior.ScanTracker` gom probe theo cặp (src, dst) thành episode, đóng sau 10s im lặng, gán đúng một kỹ thuật `half_open`/`connect`/`service`). `ContentMatcher` hiện dùng `in`; Phase 6 thay ruột bằng Aho-Corasick mà giữ nguyên interface. Alert ghi ra JSON lines.
